@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         VLTK Idle - Force Modify Ns Data
+// @name         VLTK Idle - Draggable Ns Editor (Equipment Supported)
 // @namespace    https://tampermonkey.net/
-// @version      10.3
-// @description  Tự động hook Ns; ép ghi đè thuộc tính chỉ đọc và chống game reset giá trị
+// @version      10.4
+// @description  Tự động hook Ns; quét sâu và chỉnh sửa toàn bộ chỉ số trang bị
 // @match        https://hoaniemi2003.net/vltk/*
 // @match        https://hoainiem2003.net/vltk/*
 // @run-at       document-start
@@ -17,7 +17,8 @@
     }
     window.__vltkNsModLoaded = true;
 
-    const SCRIPT_UPDATE_URL = "https://raw.githubusercontent.com/your-repo/vltk-mod/main/script.user.js";
+    // Đường dẫn file script trên GitHub Raw của bạn
+    const SCRIPT_UPDATE_URL = "https://raw.githubusercontent.com/kaylypro1323/hackidle/main/script.user.js";
 
     // =============================================================
     // 1. TỰ ĐỘNG FAKE IP CLIENT
@@ -107,7 +108,7 @@
     }
 
     // =============================================================
-    // 3. HÀM KÉO THẢ TÁCH BIỆT TAP / DRAG FOR MOBILE
+    // 3. KÉO THẢ TÁCH BIỆT TAP / DRAG FOR MOBILE
     // =============================================================
     function makeDraggable(element, handle, onClickCallback) {
         let posX = 0, posY = 0, initialX = 0, initialY = 0;
@@ -161,7 +162,7 @@
     }
 
     // =============================================================
-    // 4. UI VÀ BẢNG ĐIỀU KHIỂN (CÓ HÀM FORCE SETTER)
+    // 4. UI VÀ THUẬT TOÁN QUÉT SÂU CHỈ SỐ TRANG BỊ
     // =============================================================
     let searchDebounceTimer = null;
     let lastSearchQuery = null;
@@ -210,7 +211,7 @@
                 </div>
                 <div id="vltk-ns-status" style="padding:8px 10px;color:#dcdcaa;font-size:12px;border-bottom:1px solid #333;">Đang kiểm tra biến Ns...</div>
                 <div style="padding:10px;border-bottom:1px solid #333;">
-                    <input type="text" id="vltk-ns-search" placeholder="Nhập từ khóa (VD: lvl, exp, gold)..." style="width:100%;padding:8px;background:#2d2d2d;color:#fff;border:1px solid #444;border-radius:4px;box-sizing:border-box;font-size:14px;">
+                    <input type="text" id="vltk-ns-search" placeholder="Nhập từ khóa (VD: eq, bag, lvl, str)..." style="width:100%;padding:8px;background:#2d2d2d;color:#fff;border:1px solid #444;border-radius:4px;box-sizing:border-box;font-size:14px;">
                 </div>
                 <div id="vltk-ns-list" style="padding:10px;overflow-y:auto;overflow-x:hidden;flex-grow:1;touch-action:pan-y;"></div>`;
 
@@ -224,10 +225,6 @@
                 const updateBtn = document.getElementById('vltk-ns-update');
                 const handleUpdate = function (e) {
                     if (e && e.cancelable) e.preventDefault();
-                    if (SCRIPT_UPDATE_URL.includes("your-repo")) {
-                        alert("Vui lòng dán URL vào 'SCRIPT_UPDATE_URL' ở đầu code!");
-                        return;
-                    }
                     
                     updateBtn.innerText = "⏳ Đang tải...";
                     updateBtn.disabled = true;
@@ -289,7 +286,7 @@
             }
 
             if (statusEl) {
-                statusEl.textContent = '✅ Đã kết nối Ns!';
+                statusEl.textContent = '✅ Đã kết nối Ns! Nhập "eq" hoặc "bag" để tìm trang bị.';
                 statusEl.style.color = '#4ec9b0';
             }
 
@@ -301,9 +298,16 @@
             const fragment = document.createDocumentFragment();
             let count = 0;
 
+            // Thuật toán walk nâng cấp: Duyệt sâu tới độ sâu 6 cho nhánh Trang bị (eq, bag, items...)
             function walk(obj, path, depth) {
-                if (typeof obj !== 'object' || obj === null || count > 100 || depth > 2) return;
-                
+                if (typeof obj !== 'object' || obj === null || count > 200) return;
+
+                // Tăng độ sâu cho các nhánh chứa trang bị
+                const isEquipBranch = /(eq|equip|bag|item|wear|inv)/i.test(path);
+                const maxDepth = isEquipBranch ? 6 : 3;
+
+                if (depth > maxDepth) return;
+
                 const keys = Object.keys(obj);
                 for (let i = 0; i < keys.length; i++) {
                     const k = keys[i];
@@ -356,10 +360,8 @@
                 let newV = (typeof v === 'number') ? Number(raw) : (typeof v === 'boolean' ? (raw === 'true') : raw);
 
                 try {
-                    // 1. Gán bình thường
                     parent[key] = newV;
 
-                    // 2. Ép ghi đè Property Descriptor (Chống Read-only hoặc Getter/Setter)
                     try {
                         Object.defineProperty(parent, key, {
                             value: newV,
@@ -369,7 +371,6 @@
                         });
                     } catch (_err) {}
 
-                    // 3. Nếu thuộc tính thuộc Ns, kích hoạt hàm render UI của Game nếu có
                     if (window.Ns && typeof window.Ns.update === 'function') window.Ns.update();
                     if (window.Ns && typeof window.Ns.render === 'function') window.Ns.render();
 
@@ -380,7 +381,7 @@
                         saveBtn.style.background = '#0e639c';
                     }, 1000);
                 } catch (err) {
-                    alert('Không thể chỉnh sửa thuộc tính này!');
+                    alert('Lỗi khi lưu giá trị!');
                 }
             };
 
