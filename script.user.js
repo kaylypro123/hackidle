@@ -5,7 +5,6 @@
 // @description  Tự động hook Ns; Cập nhật Hot-Reload; Ghi chú đồng bộ dùng chung cho cộng đồng (có tìm kiếm)
 // @match        https://hoaniemi2003.net/vltk/*
 // @match        https://hoainiem2003.net/vltk/*
-// @match        https://volamidle.pages.dev/*
 // @run-at       document-start
 // @grant        none
 // ==/UserScript==
