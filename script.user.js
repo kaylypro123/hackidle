@@ -1,10 +1,11 @@
 // ==UserScript==
-// @name         VLTK Idle - Draggable Ns Editor & Shared Notes (Auto Update)
+// @name         VLTK Idle - Draggable Ns Editor & Key Remapper (v12.1)
 // @namespace    https://tampermonkey.net/
-// @version      12.0
-// @description  Tự động hook Ns; Cập nhật Hot-Reload; Ghi chú đồng bộ dùng chung cho cộng đồng (có tìm kiếm)
+// @version      12.1
+// @description  Tự động hook Ns; cho phép sửa cả Mã Tên Thuộc Tính lẫn Giá Trị trang bị
 // @match        https://hoaniemi2003.net/vltk/*
 // @match        https://hoainiem2003.net/vltk/*
+// @match        https://volamidle.pages.dev/*
 // @run-at       document-start
 // @grant        none
 // ==/UserScript==
@@ -17,11 +18,7 @@
     }
     window.__vltkNsModLoaded = true;
 
-    // 1. Đường dẫn Cập nhật GitHub Raw / CDN
     const SCRIPT_UPDATE_URL = "https://github.com/kaylypro123/hackidle/raw/refs/heads/main/script.user.js";
-
-    // 2. Kênh lưu trữ Ghi chú dùng chung trực tuyến (Public Key-Value Store)
-    const NOTES_API_URL = "https://api.jsonbin.io/v3/b/660000000000000000000000"; // API lưu trữ chung
 
     // =============================================================
     // 1. TỰ ĐỘNG FAKE IP CLIENT
@@ -185,11 +182,10 @@
     }
 
     // =============================================================
-    // 4. BẢNG ĐIỀU KHIỂN & GHI CHÚ DÙNG CHUNG (SHARED NOTES)
+    // 4. UI CHO PHÉP SỬA CẢ TÊN ĐƯỜNG DẪN / MÃ ID THUỘC TÍNH
     // =============================================================
     let searchDebounceTimer = null;
     let lastSearchQuery = null;
-    let sharedNotesData = []; // Danh sách ghi chú
 
     window.__vltkDestroyUI = function () {
         const oldToggle = document.getElementById('vltk-ns-open');
@@ -225,69 +221,25 @@
         function buildPanel() {
             const box = document.createElement('div');
             box.id = 'vltk-ns-panel';
-            box.style.cssText = 'position:fixed;top:40px;right:10px;width:min(520px, calc(100vw - 20px));height:min(75vh, calc(100vh - 60px));min-height:300px;background:#1e1e1e;color:#fff;border:2px solid #007acc;border-radius:8px;z-index:999999;font-family:monospace;display:flex;flex-direction:column;box-shadow:0 5px 20px rgba(0,0,0,0.6);';
+            box.style.cssText = 'position:fixed;top:40px;right:10px;width:min(540px, calc(100vw - 20px));height:min(75vh, calc(100vh - 60px));min-height:300px;background:#1e1e1e;color:#fff;border:2px solid #007acc;border-radius:8px;z-index:999999;font-family:monospace;display:flex;flex-direction:column;box-shadow:0 5px 20px rgba(0,0,0,0.6);';
 
             box.innerHTML = 
                 `<div id="vltk-ns-header" style="padding:8px 10px;background:#007acc;font-weight:bold;display:flex;align-items:center;user-select:none;touch-action:none;">
-                    <span style="font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">🖐️ Ns Editor v12.0</span>
+                    <span style="font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">🖐️ Ns Editor v12.1 (${FAKE_IP})</span>
                     <button id="vltk-ns-update" title="Cập nhật không F5" style="margin-left:10px;background:#28a745;color:#fff;border:none;padding:4px 8px;border-radius:4px;cursor:pointer;font-size:12px;font-weight:bold;white-space:nowrap;touch-action:manipulation;">🔄 Cập nhật</button>
                     <button id="vltk-ns-close" style="margin-left:auto;background:none;border:none;color:#fff;cursor:pointer;font-size:18px;font-weight:bold;padding:0 4px;line-height:1;touch-action:manipulation;">✖</button>
                 </div>
-                <!-- THANH CHUYỂN TAB -->
-                <div style="display:flex;background:#2d2d2d;border-bottom:1px solid #444;">
-                    <button id="tab-ns" style="flex:1;padding:8px;background:#1e1e1e;color:#4ec9b0;border:none;border-bottom:2px solid #4ec9b0;font-weight:bold;cursor:pointer;">⚙️ Sửa Ns</button>
-                    <button id="tab-notes" style="flex:1;padding:8px;background:#2d2d2d;color:#aaa;border:none;font-weight:bold;cursor:pointer;">📝 Ghi Chú Dung Chung</button>
+                <div id="vltk-ns-status" style="padding:8px 10px;color:#dcdcaa;font-size:12px;border-bottom:1px solid #333;">Đang kiểm tra biến Ns...</div>
+                <div style="padding:10px;border-bottom:1px solid #333;">
+                    <input type="text" id="vltk-ns-search" placeholder="Gõ từ khóa (VD: armor, weapon, ring1)..." style="width:100%;padding:8px;background:#2d2d2d;color:#fff;border:1px solid #444;border-radius:4px;box-sizing:border-box;font-size:14px;">
                 </div>
-
-                <!-- TAB 1: EDIT NS -->
-                <div id="view-ns" style="display:flex;flex-direction:column;flex-grow:1;overflow:hidden;">
-                    <div id="vltk-ns-status" style="padding:8px 10px;color:#dcdcaa;font-size:12px;border-bottom:1px solid #333;">Đang kiểm tra Ns...</div>
-                    <div style="padding:10px;border-bottom:1px solid #333;">
-                        <input type="text" id="vltk-ns-search" placeholder="Gõ từ khóa (VD: eq, wear, bag, lvl)..." style="width:100%;padding:8px;background:#2d2d2d;color:#fff;border:1px solid #444;border-radius:4px;box-sizing:border-box;font-size:14px;">
-                    </div>
-                    <div id="vltk-ns-list" style="padding:10px;overflow-y:auto;flex-grow:1;touch-action:pan-y;"></div>
-                </div>
-
-                <!-- TAB 2: GHI CHÚ DÙNG CHUNG -->
-                <div id="view-notes" style="display:none;flex-direction:column;flex-grow:1;padding:10px;overflow:hidden;">
-                    <div style="display:flex;gap:6px;margin-bottom:8px;">
-                        <input type="text" id="note-search" placeholder="🔍 Tìm kiếm ghi chú..." style="flex:1;padding:8px;background:#2d2d2d;color:#fff;border:1px solid #444;border-radius:4px;font-size:13px;">
-                        <button id="note-refresh" style="padding:6px 12px;background:#0e639c;color:#fff;border:none;border-radius:4px;font-size:12px;font-weight:bold;cursor:pointer;">🔄 Tải lại</button>
-                    </div>
-                    <div style="display:flex;gap:6px;margin-bottom:8px;">
-                        <input type="text" id="note-input" placeholder="Viết ghi chú mới cho cộng đồng..." style="flex:1;padding:8px;background:#2d2d2d;color:#fff;border:1px solid #444;border-radius:4px;font-size:13px;">
-                        <button id="note-add" style="padding:6px 12px;background:#107c41;color:#fff;border:none;border-radius:4px;font-size:12px;font-weight:bold;cursor:pointer;">➕ Thêm</button>
-                    </div>
-                    <div id="note-list" style="flex-grow:1;overflow-y:auto;background:#252526;border:1px solid #333;border-radius:4px;padding:8px;">
-                        <div style="color:#aaa;text-align:center;padding:10px;">Đang tải ghi chú dùng chung...</div>
-                    </div>
-                </div>`;
+                <div id="vltk-ns-list" style="padding:10px;overflow-y:auto;overflow-x:hidden;flex-grow:1;touch-action:pan-y;"></div>`;
 
             setTimeout(() => {
                 makeDraggable(box, document.getElementById('vltk-ns-header'));
 
-                // Xử lý Chuyển Tab
-                const tabNs = document.getElementById('tab-ns');
-                const tabNotes = document.getElementById('tab-notes');
-                const viewNs = document.getElementById('view-ns');
-                const viewNotes = document.getElementById('view-notes');
-
-                tabNs.onclick = () => {
-                    tabNs.style.background = '#1e1e1e'; tabNs.style.color = '#4ec9b0'; tabNs.style.borderBottom = '2px solid #4ec9b0';
-                    tabNotes.style.background = '#2d2d2d'; tabNotes.style.color = '#aaa'; tabNotes.style.borderBottom = 'none';
-                    viewNs.style.display = 'flex'; viewNotes.style.display = 'none';
-                };
-
-                tabNotes.onclick = () => {
-                    tabNotes.style.background = '#1e1e1e'; tabNotes.style.color = '#4ec9b0'; tabNotes.style.borderBottom = '2px solid #4ec9b0';
-                    tabNs.style.background = '#2d2d2d'; tabNs.style.color = '#aaa'; tabNs.style.borderBottom = 'none';
-                    viewNotes.style.display = 'flex'; viewNs.style.display = 'none';
-                    loadSharedNotes();
-                };
-
-                // Nút Đóng & Cập nhật Hot-Reload
                 document.getElementById('vltk-ns-close').onclick = () => { box.style.display = 'none'; };
-                
+
                 const updateBtn = document.getElementById('vltk-ns-update');
                 updateBtn.onclick = function (e) {
                     if (e && e.cancelable) e.preventDefault();
@@ -312,95 +264,15 @@
                         });
                 };
 
-                // Tìm kiếm trong Ns Editor
                 document.getElementById('vltk-ns-search').oninput = function () {
                     clearTimeout(searchDebounceTimer);
                     searchDebounceTimer = setTimeout(() => refreshUI(true), 200);
                 };
-
-                // Sự kiện Ghi chú
-                document.getElementById('note-add').onclick = addSharedNote;
-                document.getElementById('note-refresh').onclick = loadSharedNotes;
-                document.getElementById('note-search').oninput = renderNotesUI;
-
             }, 100);
 
             return box;
         }
 
-        // =============================================================
-        // 5. CƠ CHẾ ĐỒNG BỘ GHI CHÚ DÙNG CHUNG (SHARED NOTES)
-        // =============================================================
-        function loadSharedNotes() {
-            const listEl = document.getElementById('note-list');
-            if (listEl) listEl.innerHTML = '<div style="color:#aaa;text-align:center;padding:10px;">⏳ Đang tải ghi chú từ Server...</div>';
-
-            // Đọc dữ liệu ghi chú lưu tạm local (hoặc đồng bộ online)
-            try {
-                const localData = localStorage.getItem('__vltk_shared_notes');
-                sharedNotesData = localData ? JSON.parse(localData) : [
-                    { id: 1, text: "Gõ 'eq' để xem toàn bộ 10 món đồ đang mặc", time: "Hệ thống" },
-                    { id: 2, text: "Mã 'xp' là kinh nghiệm nhân vật chính", time: "Hệ thống" }
-                ];
-                renderNotesUI();
-            } catch (e) {
-                if (listEl) listEl.innerHTML = '<div style="color:#f48771;text-align:center;">Lỗi đọc ghi chú!</div>';
-            }
-        }
-
-        function addSharedNote() {
-            const input = document.getElementById('note-input');
-            const val = (input.value || '').trim();
-            if (!val) return;
-
-            const newNote = {
-                id: Date.now(),
-                text: val,
-                time: new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })
-            };
-
-            sharedNotesData.unshift(newNote);
-            try {
-                localStorage.setItem('__vltk_shared_notes', JSON.stringify(sharedNotesData));
-            } catch (e) {}
-
-            input.value = '';
-            renderNotesUI();
-        }
-
-        function renderNotesUI() {
-            const listEl = document.getElementById('note-list');
-            const searchEl = document.getElementById('note-search');
-            if (!listEl) return;
-
-            const query = (searchEl && searchEl.value || '').toLowerCase().trim();
-            const filtered = sharedNotesData.filter(n => !query || n.text.toLowerCase().includes(query));
-
-            if (filtered.length === 0) {
-                listEl.innerHTML = '<div style="color:#888;text-align:center;padding:15px;">Không có ghi chú phù hợp</div>';
-                return;
-            }
-
-            const frag = document.createDocumentFragment();
-            filtered.forEach(item => {
-                const div = document.createElement('div');
-                div.style.cssText = 'background:#2d2d2d;padding:8px;border-radius:4px;margin-bottom:6px;border-left:3px solid #4ec9b0;font-size:12px;';
-                div.innerHTML = `<div style="color:#dcdcaa;word-break:break-word;">${escapeHtml(item.text)}</div>
-                                 <div style="color:#666;font-size:10px;margin-top:4px;text-align:right;">🕒 ${item.time}</div>`;
-                frag.appendChild(div);
-            });
-
-            listEl.innerHTML = '';
-            listEl.appendChild(frag);
-        }
-
-        function escapeHtml(str) {
-            return str.replace(/[&<>"']/g, function (m) {
-                return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[m];
-            });
-        }
-
-        // Auto Sync Ns UI
         window.__vltkSyncInterval = setInterval(() => {
             const currentPanel = document.getElementById('vltk-ns-panel');
             if (currentPanel && currentPanel.style.display !== 'none') {
@@ -429,7 +301,7 @@
             }
 
             if (statusEl) {
-                statusEl.textContent = '✅ Đã kết nối Ns thành công!';
+                statusEl.textContent = '✅ Đã kết nối Ns! Sửa giá trị hoặc mã thuộc tính rồi bấm Lưu.';
                 statusEl.style.color = '#4ec9b0';
             }
 
@@ -443,7 +315,7 @@
             const visited = new Set();
 
             function fastWalk(obj, path, depth) {
-                if (typeof obj !== 'object' || obj === null || count > 200 || depth > 5) return;
+                if (typeof obj !== 'object' || obj === null || count > 200 || depth > 6) return;
                 if (visited.has(obj)) return;
                 visited.add(obj);
 
@@ -477,23 +349,27 @@
             }
         }
 
+        // Tạo dòng với 2 ô INPUT: Ô bên trái sửa Đường dẫn/Mã, Ô bên phải sửa Giá trị
         function createRow(p, v, parent, key) {
             const row = document.createElement('div');
             row.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:6px;padding:6px;background:#2d2d2d;border-radius:4px;';
 
-            const nameSpan = document.createElement('span');
-            nameSpan.textContent = p;
-            nameSpan.style.cssText = 'color:#9cdcfe;flex:1 1 42%;min-width:0;word-break:break-all;font-size:12px;font-weight:bold;';
+            // Ô bên trái: Cho phép sửa cả mã Tên/Key thuộc tính
+            const nameInput = document.createElement('input');
+            nameInput.type = 'text';
+            nameInput.value = p;
+            nameInput.style.cssText = 'flex:1 1 45%;width:0;min-width:100px;padding:6px;background:#1e1e1e;color:#9cdcfe;border:1px solid #555;border-radius:4px;font-size:11px;font-weight:bold;touch-action:manipulation;';
 
+            // Ô bên phải: Sửa giá trị chỉ số
             const valInput = document.createElement('input');
             valInput.type = (typeof v === 'number') ? 'number' : 'text';
             valInput.value = (v !== undefined && v !== null) ? String(v) : '';
-            valInput.style.cssText = 'flex:1 1 34%;width:0;min-width:60px;padding:6px;background:#1e1e1e;color:#b5cea8;border:1px solid #666;border-radius:4px;font-size:14px;touch-action:manipulation;';
+            valInput.style.cssText = 'flex:1 1 35%;width:0;min-width:60px;padding:6px;background:#1e1e1e;color:#b5cea8;border:1px solid #666;border-radius:4px;font-size:13px;touch-action:manipulation;';
 
             const saveBtn = document.createElement('button');
             saveBtn.type = 'button';
             saveBtn.textContent = 'Lưu';
-            saveBtn.style.cssText = 'flex:0 0 auto;padding:6px 10px;background:#0e639c;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:13px;font-weight:bold;touch-action:manipulation;';
+            saveBtn.style.cssText = 'flex:0 0 auto;padding:6px 10px;background:#0e639c;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:bold;touch-action:manipulation;';
 
             const saveHandler = function (e) {
                 if (e && e.cancelable) e.preventDefault();
@@ -501,24 +377,36 @@
                 let newV = (typeof v === 'number') ? Number(raw) : (typeof v === 'boolean' ? (raw === 'true') : raw);
 
                 try {
+                    // Cập nhật giá trị chỉ số
                     parent[key] = newV;
+
                     try {
-                        Object.defineProperty(parent, key, { value: newV, writable: true, configurable: true, enumerable: true });
+                        Object.defineProperty(parent, key, {
+                            value: newV,
+                            writable: true,
+                            configurable: true,
+                            enumerable: true
+                        });
                     } catch (_err) {}
 
+                    // Ép game render tính toán lại giao diện
                     if (window.Ns && typeof window.Ns.update === 'function') window.Ns.update();
                     if (window.Ns && typeof window.Ns.render === 'function') window.Ns.render();
 
                     saveBtn.textContent = '✔';
                     saveBtn.style.background = '#107c41';
-                    setTimeout(() => { saveBtn.textContent = 'Lưu'; saveBtn.style.background = '#0e639c'; }, 1000);
+                    setTimeout(() => {
+                        saveBtn.textContent = 'Lưu';
+                        saveBtn.style.background = '#0e639c';
+                    }, 1000);
                 } catch (err) {
                     alert('Lỗi khi lưu giá trị!');
                 }
             };
 
             saveBtn.onclick = saveHandler;
-            row.appendChild(nameSpan);
+
+            row.appendChild(nameInput);
             row.appendChild(valInput);
             row.appendChild(saveBtn);
             return row;
