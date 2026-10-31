@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         VLTK Idle - Draggable Ns Editor v13.3 (Add Item to Inventory & Clean Server Scanner)
+// @name         VLTK Idle - Draggable Ns Editor v13.5 (Full 6-Line Attributes & Server Config Scanner)
 // @namespace    https://tampermonkey.net/
-// @version      13.3
-// @description  v13.3: Thêm ô Add Item bằng ID vào rương Ns.inv, làm sạch Tab Quét Server, Đồng bộ Ghi chú Cloud toàn máy chủ
+// @version      13.5
+// @description  v13.5: Tạo đồ chuẩn tên + Full 6 dòng thuộc tính vào rương & Quét sâu toàn bộ Config Server từ g.js
 // @match        https://hoaniemi2003.net/vltk/*
 // @match        https://hoainiem2003.net/vltk/*
 // @match        https://volamidle.pages.dev/*
@@ -15,7 +15,7 @@
 (function () {
     'use strict';
 
-    const CURRENT_VERSION = "13.3";
+    const CURRENT_VERSION = "13.5";
 
     if (window.__vltkNsModLoaded) {
         if (typeof window.__vltkDestroyUI === 'function') window.__vltkDestroyUI();
@@ -203,6 +203,46 @@
         if (window.__vltkSyncInterval) clearInterval(window.__vltkSyncInterval);
     };
 
+    // Hàm truy tìm thông tin vật phẩm từ toàn bộ Config Server
+    function findItemInfoInServerConfig(targetId) {
+        let foundName = null;
+        let foundItem = null;
+
+        function searchInObj(obj) {
+            if (!obj || typeof obj !== 'object' || foundName) return;
+            for (let k in obj) {
+                try {
+                    let item = obj[k];
+                    if (item && typeof item === 'object') {
+                        let id = item.id !== undefined ? item.id : (item.d !== undefined ? item.d : k);
+                        if (String(id) === String(targetId)) {
+                            let name = item.n || item.name || item.title;
+                            if (name && typeof name === 'string') {
+                                foundName = name;
+                                foundItem = item;
+                                return;
+                            }
+                        }
+                    }
+                } catch (e) {}
+            }
+        }
+
+        Object.keys(window).forEach(wKey => {
+            if (/^(Cfg|Item|Equip|Config|JX|JW|JS|JSP|G|Items|ALL_ITEMS)/i.test(wKey)) {
+                searchInObj(window[wKey]);
+            }
+        });
+
+        if (!foundName && window.Ns) {
+            searchInObj(window.Ns.eq);
+            searchInObj(window.Ns.inv);
+            searchInObj(window.Ns.bag);
+        }
+
+        return { name: foundName, raw: foundItem };
+    }
+
     function installUI() {
         if (!document.body || document.getElementById('vltk-ns-open-wrapper')) return;
 
@@ -256,13 +296,11 @@
                     <button id="tab-notes" style="flex:1;padding:8px 4px;background:#2d2d2d;color:#aaa;border:none;font-weight:bold;font-size:12px;cursor:pointer;">📝 Ghi Chú</button>
                 </div>
 
-                <!-- VIEW 1: SỬA NS & KHUNG NHẬP ID THÊM ĐỒ VÀO RƯƠNG -->
                 <div id="view-ns" style="display:flex;flex-direction:column;flex-grow:1;overflow:hidden;">
                     <div id="vltk-ns-status" style="padding:8px 10px;color:#dcdcaa;font-size:12px;border-bottom:1px solid #333;">Đang kiểm tra Ns...</div>
                     
-                    <!-- BỔ SUNG Ô NHẬP ID & NÚT THÊM MÓN ĐỒ VÀO RƯƠNG (KHUNG KHOANH ĐỎ) -->
                     <div style="padding:8px 10px;background:#252526;border-bottom:1px solid #333;display:flex;gap:6px;align-items:center;">
-                        <input type="text" id="vltk-add-item-id" placeholder="Nhập ID món đồ (VD: 101, weapon, ring1)..." style="flex:1;padding:6px 8px;background:#1e1e1e;color:#ffe875;border:1px solid #007acc;border-radius:4px;font-size:12px;font-weight:bold;">
+                        <input type="text" id="vltk-add-item-id" placeholder="Nhập ID món đồ (VD: 1, 2, weapon)..." style="flex:1;padding:6px 8px;background:#1e1e1e;color:#ffe875;border:1px solid #007acc;border-radius:4px;font-size:12px;font-weight:bold;">
                         <button id="vltk-add-item-btn" style="padding:6px 12px;background:#107c41;color:#fff;border:none;border-radius:4px;font-weight:bold;font-size:12px;cursor:pointer;white-space:nowrap;">➕ Thêm vào rương</button>
                     </div>
 
@@ -272,11 +310,10 @@
                     <div id="vltk-ns-list" style="padding:10px;overflow-y:auto;overflow-x:hidden;flex-grow:1;touch-action:pan-y;"></div>
                 </div>
 
-                <!-- VIEW 2: QUÉT SERVER SẠCH SẼ (CHỈ HIỆN KHI TÌM KIẾM) -->
                 <div id="view-server" style="display:none;flex-direction:column;flex-grow:1;overflow:hidden;padding:10px;">
-                    <div style="margin-bottom:8px;color:#4ec9b0;font-size:12px;font-weight:bold;">🔎 Tìm kiếm Trang bị & ID có trong Game</div>
+                    <div style="margin-bottom:8px;color:#4ec9b0;font-size:12px;font-weight:bold;">🔎 Tìm kiếm Trang bị & ID trên Server Config</div>
                     <div style="display:flex;gap:6px;margin-bottom:8px;">
-                        <input type="text" id="server-item-search" placeholder="Nhập tên vật phẩm (VD: Đao, Kiếm, Nhẫn, Áo)..." style="flex:1;padding:8px;background:#2d2d2d;color:#fff;border:1px solid #444;border-radius:4px;font-size:13px;">
+                        <input type="text" id="server-item-search" placeholder="Nhập tên vật phẩm (VD: Khai Thiên, Kích, Đao, Kiếm)..." style="flex:1;padding:8px;background:#2d2d2d;color:#fff;border:1px solid #444;border-radius:4px;font-size:13px;">
                         <button id="server-item-scan-btn" style="padding:6px 12px;background:#0e639c;color:#fff;border:none;border-radius:4px;font-size:12px;font-weight:bold;cursor:pointer;">Tìm ID</button>
                     </div>
                     <div id="server-item-list" style="flex-grow:1;overflow-y:auto;background:#252526;border:1px solid #333;border-radius:4px;padding:8px;">
@@ -284,18 +321,17 @@
                     </div>
                 </div>
 
-                <!-- VIEW 3: GHI CHÚ ĐỒNG BỘ TOÀN SERVER (CLOUD SYNC) -->
                 <div id="view-notes" style="display:none;flex-direction:column;flex-grow:1;padding:10px;overflow:hidden;">
                     <div style="display:flex;gap:6px;margin-bottom:8px;">
                         <input type="text" id="note-search" placeholder="🔍 Tìm kiếm ghi chú..." style="flex:1;padding:8px;background:#2d2d2d;color:#fff;border:1px solid #444;border-radius:4px;font-size:13px;">
                         <button id="note-refresh" style="padding:6px 12px;background:#0e639c;color:#fff;border:none;border-radius:4px;font-size:12px;font-weight:bold;cursor:pointer;">🔄 Tải lại</button>
                     </div>
                     <div style="display:flex;gap:6px;margin-bottom:8px;">
-                        <input type="text" id="note-input" placeholder="Viết ghi chú chia sẻ toàn server..." style="flex:1;padding:8px;background:#2d2d2d;color:#fff;border:1px solid #444;border-radius:4px;font-size:13px;">
+                        <input type="text" id="note-input" placeholder="Viết ghi chú chia sẻ..." style="flex:1;padding:8px;background:#2d2d2d;color:#fff;border:1px solid #444;border-radius:4px;font-size:13px;">
                         <button id="note-add" style="padding:6px 12px;background:#107c41;color:#fff;border:none;border-radius:4px;font-size:12px;font-weight:bold;cursor:pointer;">➕ Thêm Ghi Chú</button>
                     </div>
                     <div id="note-list" style="flex-grow:1;overflow-y:auto;background:#252526;border:1px solid #333;border-radius:4px;padding:8px;">
-                        <div style="color:#aaa;text-align:center;padding:10px;">Đang tải ghi chú đồng bộ...</div>
+                        <div style="color:#aaa;text-align:center;padding:10px;">Đang tải ghi chú...</div>
                     </div>
                 </div>`;
 
@@ -335,7 +371,7 @@
 
                 document.getElementById('vltk-ns-close').onclick = () => { box.style.display = 'none'; };
 
-                // XỬ LÝ SỰ KIỆN NÚT ➕ THÊM MÓN ĐỒ VÀO RƯƠNG BY ID
+                // XỬ LÝ NÚT THÊM ĐỒ: TỰ ĐỌC TÊN THẬT TỪ SERVER & TẠO ĐỦ 6 DÒNG DÒNG THUỘC TÍNH
                 document.getElementById('vltk-add-item-btn').onclick = function () {
                     const idInput = document.getElementById('vltk-add-item-id');
                     const rawId = (idInput.value || '').trim();
@@ -351,16 +387,50 @@
                         return;
                     }
 
-                    // Khởi tạo đối tượng vật phẩm mới
-                    const newItem = {
-                        id: isNaN(rawId) ? rawId : Number(rawId),
-                        n: "Món đồ mới ID " + rawId,
-                        lvl: 1,
-                        enh: 0,
-                        mag: [{ a: 114, p: 20, n: "kháng tất cả" }]
-                    };
+                    const parsedId = isNaN(rawId) ? rawId : Number(rawId);
+                    
+                    // Lùng từ điển Server Config lấy đúng Tên
+                    const itemServerInfo = findItemInfoInServerConfig(rawId);
+                    const realName = itemServerInfo.name || ("Vật phẩm [" + rawId + "]");
 
-                    // Đẩy món đồ vào mảng Hành trang (inv hoặc bag)
+                    // Mảng 6 dòng thuộc tính cực bá đạo
+                    const full6Mag = [
+                        { a: 114, p: 50, n: "kháng tất cả" },
+                        { a: 115, p: 40, n: "Tốc độ đánh - ngoại công" },
+                        { a: 126, p: 100, n: "sát thương vật lý - ngoại công" },
+                        { a: 135, p: 30, n: "may mắn" },
+                        { a: 136, p: 15, n: "hút sinh lực" },
+                        { a: 139, p: 1, n: "kỹ năng vốn có" }
+                    ];
+
+                    let newItem;
+                    if (itemServerInfo.raw) {
+                        newItem = JSON.parse(JSON.stringify(itemServerInfo.raw));
+                        newItem.uid = Date.now() + Math.floor(Math.random() * 1000);
+                        newItem.id = parsedId;
+                        newItem.d = parsedId;
+                        newItem.n = realName;
+                        newItem.enh = 12;
+                        newItem.mag = full6Mag;
+                        newItem.lock = true;
+                    } else {
+                        newItem = {
+                            uid: Date.now() + Math.floor(Math.random() * 1000),
+                            id: parsedId,
+                            d: parsedId,
+                            n: realName,
+                            lvl: 100,
+                            enh: 12,
+                            s: 1,
+                            k: 0,
+                            t: "weapon",
+                            price: 100000,
+                            lock: true,
+                            base: [300, 500],
+                            mag: full6Mag
+                        };
+                    }
+
                     if (Array.isArray(ns.inv)) {
                         ns.inv.unshift(newItem);
                     } else if (Array.isArray(ns.bag)) {
@@ -369,11 +439,10 @@
                         ns.inv = [newItem];
                     }
 
-                    // Gọi hàm update UI của game nếu có
                     if (typeof ns.update === 'function') ns.update();
                     if (typeof ns.render === 'function') ns.render();
 
-                    alert("✅ Đã thêm món đồ ID [" + rawId + "] vào Rương thành công! Mở túi đồ game để kiểm tra.");
+                    alert("✅ Đã tạo vật phẩm chuẩn tên: [" + realName + "] kèm Full 6 dòng thuộc tính vào Rương!");
                     idInput.value = '';
                     refreshUI(true);
                 };
@@ -401,9 +470,6 @@
             return box;
         }
 
-        // =============================================================
-        // KIỂM TRA PHIÊN BẢN VÀ BẬT POPUP
-        // =============================================================
         function checkRemoteVersion() {
             const checkUrl = UPDATE_ENDPOINTS[0] + "?check=" + Date.now();
             fetch(checkUrl, { cache: "no-store" })
@@ -461,7 +527,6 @@
 
             document.getElementById('vltk-pop-btn-now').onclick = () => {
                 const btnNow = document.getElementById('vltk-pop-btn-now');
-                btnNow.innerText = "⏳ Đang tải...";
                 triggerUpdate(btnNow);
             };
         }
@@ -514,9 +579,7 @@
 
         setTimeout(checkRemoteVersion, 2000);
 
-        // =============================================================
-        // LÀM SẠCH TAB QUÉT SERVER: CHỈ HIỆN KHI NHẬP TÊN TÌM KIẾM
-        // =============================================================
+        // HÀM QUÉT ĐỒ SÂU TỪ SERVER CONFIG
         function scanServerItems() {
             const listEl = document.getElementById('server-item-list');
             const searchEl = document.getElementById('server-item-search');
@@ -525,28 +588,28 @@
             const query = (searchEl && searchEl.value || '').toLowerCase().trim();
             if (!query) {
                 listEl.innerHTML = `<div style="color:#aaa;text-align:center;padding:20px;">
-                    Nhập tên vật phẩm vào ô trên (VD: Đao, Kiếm, Nhẫn) để tìm ID tương ứng
+                    Nhập tên vật phẩm vào ô trên (VD: Khai Thiên, Kích, Đao, Kiếm) để tìm ID tương ứng
                 </div>`;
                 return;
             }
 
             const results = [];
-            const seenIds = new Set();
+            const seenKeys = new Set();
 
-            function checkObj(obj, path) {
+            function checkObj(obj, pathName) {
                 if (!obj || typeof obj !== 'object') return;
                 for (let k in obj) {
                     try {
                         let item = obj[k];
                         if (item && typeof item === 'object') {
                             let name = item.n || item.name || item.title;
-                            let id = item.id || item.k || item.type || k;
+                            let id = item.id !== undefined ? item.id : (item.d !== undefined ? item.d : k);
                             if (name && typeof name === 'string' && name.length > 1) {
-                                const keyId = path + '_' + id + '_' + name;
-                                if (!seenIds.has(keyId)) {
+                                const keyId = id + '_' + name;
+                                if (!seenKeys.has(keyId)) {
                                     if (name.toLowerCase().includes(query) || String(id).includes(query)) {
-                                        seenIds.add(keyId);
-                                        results.push({ id: id, name: name, path: path });
+                                        seenKeys.add(keyId);
+                                        results.push({ id: id, name: name, path: pathName });
                                     }
                                 }
                             }
@@ -555,11 +618,18 @@
                 }
             }
 
+            // Đào sâu các biến cấu hình toàn cục của Server
             Object.keys(window).forEach(wKey => {
-                if (/^(Cfg|Item|Equip|Config|JX|JW|JS|JSP|G|Ns)/i.test(wKey)) {
+                if (/^(Cfg|Item|Equip|Config|JX|JW|JS|JSP|G|Items|ALL_ITEMS)/i.test(wKey)) {
                     checkObj(window[wKey], wKey);
                 }
             });
+
+            if (window.Ns) {
+                checkObj(window.Ns.eq, 'Ns.eq');
+                checkObj(window.Ns.inv, 'Ns.inv');
+                checkObj(window.Ns.bag, 'Ns.bag');
+            }
 
             if (results.length === 0) {
                 listEl.innerHTML = `<div style="color:#f48771;text-align:center;padding:15px;">
@@ -584,14 +654,10 @@
             listEl.appendChild(frag);
         }
 
-        // =============================================================
-        // DÙNG CẠO CLOUD & LOCALSTORAGE DỒNG BỘ GHI CHÚ CHUNG TOÀN MÁY CHỦ
-        // =============================================================
         function loadSharedNotes() {
             const listEl = document.getElementById('note-list');
-            if (listEl) listEl.innerHTML = '<div style="color:#aaa;text-align:center;padding:10px;">⏳ Đang tải ghi chú đồng bộ...</div>';
+            if (listEl) listEl.innerHTML = '<div style="color:#aaa;text-align:center;padding:10px;">⏳ Đang tải ghi chú...</div>';
 
-            // Đọc dữ liệu từ local storage trước
             try {
                 const localData = localStorage.getItem('__vltk_shared_notes');
                 sharedNotesData = localData ? JSON.parse(localData) : [
@@ -601,18 +667,6 @@
                 ];
                 renderNotesUI();
             } catch (e) {}
-
-            // Đồng bộ dữ liệu mới nhất từ Cloud endpoint
-            fetch("https://api.jsonbin.io/v3/b/660000000000000000000000/latest", { cache: "no-store" })
-                .then(res => res.json())
-                .then(data => {
-                    if (data && data.record && Array.isArray(data.record)) {
-                        sharedNotesData = data.record;
-                        localStorage.setItem('__vltk_shared_notes', JSON.stringify(sharedNotesData));
-                        renderNotesUI();
-                    }
-                })
-                .catch(() => {});
         }
 
         function addSharedNote() {
@@ -695,7 +749,7 @@
             }
 
             if (statusEl) {
-                statusEl.textContent = '✅ Đã kết nối Ns! Nhập ID ở ô phía trên để thêm món đồ trực tiếp vào rương.';
+                statusEl.textContent = '✅ Đã kết nối Ns! Nhập ID ô trên để tạo đồ đúng tên kèm Full 6 dòng vào rương.';
                 statusEl.style.color = '#4ec9b0';
             }
 
