@@ -1,11 +1,12 @@
 // ==UserScript==
-// @name         Auto + Mod
+// @name         Auto Complete
 // @namespace    vlmod
-// @version      4.4
+// @version      4.2
 // @description  Auto Hoài Niệm + Ns Mod; chạy nền Worker, tự phục hồi RAF và cập nhật từ GitHub
 // @match        *://hoainiem2003.net/*
 // @match        *://*/*vltk*
 // @match        https://volamidle.pages.dev/*
+// @match        https://hoaniemi2003.net/vltk/*
 // @run-at       document-start
 // @inject-into  page
 // @grant        none
@@ -1700,151 +1701,87 @@ T.ready=true;return 1})()`
 
     function doResetThap2() {
         const t2 = getT2Data();
-        if (!t2) {
-            console.warn('[Auto Reset] Chưa lấy được dữ liệu Tháp 2.');
-            return false;
-        }
-        try {
+        if (t2) {
             t2.cur = 0;
             t2.best = 1;
             t2.runs = 0;
             try { if (window.Ci) window.Ci.dirty = true; } catch (e) { }
+            alert("✅ Đã Reset Tháp 2 thành công!\n- Tầng hiện tại (cur): 0\n- Kỷ lục (best): 1\n- Lượt vào (runs): 0");
             return true;
-        } catch (e) {
-            console.warn('[Auto Reset] Không thể reset Tháp 2:', e);
+        } else {
+            alert("⚠️ Chưa lấy được dữ liệu Tháp 2. Vui lòng đăng nhập vào game hẳn rồi bấm lại!");
             return false;
         }
     }
     window.doResetThap2 = doResetThap2;
 
-    // Lấy đối tượng Ns do game khởi tạo; hỗ trợ cả biến Ns dạng lexical.
-    function getNsForReset() {
+    // Lấy đúng đối tượng Ns.war do game khởi tạo; hỗ trợ cả biến Ns dạng lexical.
+    function getNsWarForReset() {
         try {
             let ns = null;
-            if (typeof window.__vltkGetNs === 'function') ns = window.__vltkGetNs();
+            if (typeof window.__vltkGetNs === 'function') {
+                ns = window.__vltkGetNs();
+            }
             if (!ns && window.Ns) ns = window.Ns;
-            if (ns && typeof ns === 'object') {
+            if (ns && ns.war && typeof ns.war === 'object') {
                 window.Ns = ns;
-                return ns;
+                return { ns, war: ns.war };
             }
         } catch (e) {
-            console.warn('[Auto Reset] Không đọc được Ns:', e);
-        }
-        return null;
-    }
-
-    // Lấy đúng đối tượng Ns.war do game khởi tạo.
-    function getNsWarForReset() {
-        const ns = getNsForReset();
-        if (ns && ns.war && typeof ns.war === 'object') {
-            return { ns, war: ns.war };
+            console.warn('[Auto Reset] Không đọc được Ns.war:', e);
         }
         return null;
     }
 
     function tabReset() {
         const a = [];
+        a.push(hdr('🔄 RESET DỮ LIỆU CHIẾN TRƯỜNG & CỬA HÀNG'));
+        a.push(note('Các thao tác ghi trực tiếp vào Ns.war trong bộ nhớ game hiện tại. Nếu máy chủ đồng bộ lại dữ liệu, giá trị có thể được khôi phục.'));
 
         a.push(hdr('⚔️ Reset chiến trường'));
+        a.push(note('Đặt tk = 0 và tkWins = 0.'));
         a.push(el('button', {
             text: '⚔️ RESET CHIẾN TRƯỜNG',
             css: BCSS + 'width:100%;padding:8px 0;font-weight:bold;margin:4px 0 8px;background:#fab387;color:#111;',
             on: () => {
                 const data = getNsWarForReset();
                 if (!data) {
-                    console.warn('[Auto Reset] Chưa kết nối được Ns.war.');
+                    alert('⚠️ Chưa lấy được Ns.war. Hãy vào game, chờ nhân vật tải xong rồi thử lại.');
                     return;
                 }
+                if (!confirm('Xác nhận reset chiến trường?\n\n- tk = 0\n- tkWins = 0')) return;
                 try {
                     data.war.tk = 0;
                     data.war.tkWins = 0;
+                    alert('✅ Đã đặt lại dữ liệu chiến trường trong Ns.war:\n- tk = ' + data.war.tk + '\n- tkWins = ' + data.war.tkWins);
                 } catch (e) {
-                    console.warn('[Auto Reset] Không thể reset chiến trường:', e);
+                    alert('❌ Không thể reset chiến trường: ' + (e && e.message ? e.message : e));
                 }
             }
         }));
 
         a.push(hdr('🛒 Reset cửa hàng'));
+        a.push(note('Đặt Ns.war.bought = {}.'));
         a.push(el('button', {
             text: '🛒 RESET CỬA HÀNG',
             css: BCSS + 'width:100%;padding:8px 0;font-weight:bold;margin:4px 0 8px;background:#a6e3a1;color:#111;',
             on: () => {
                 const data = getNsWarForReset();
                 if (!data) {
-                    console.warn('[Auto Reset] Chưa kết nối được Ns.war.');
+                    alert('⚠️ Chưa lấy được Ns.war. Hãy vào game, chờ nhân vật tải xong rồi thử lại.');
                     return;
                 }
+                if (!confirm('Xác nhận reset dữ liệu mua hàng?\n\nThao tác: Ns.war.bought = {}')) return;
                 try {
                     data.war.bought = {};
+                    alert('✅ Đã đặt Ns.war.bought = {} trong bộ nhớ game hiện tại.');
                 } catch (e) {
-                    console.warn('[Auto Reset] Không thể reset cửa hàng:', e);
+                    alert('❌ Không thể reset cửa hàng: ' + (e && e.message ? e.message : e));
                 }
             }
         }));
 
-        a.push(hdr('🧭 Làm Dã Tẩu nhanh'));
-        a.push(el('button', {
-            text: '⚡ HOÀN THÀNH DÃ TẨU',
-            css: BCSS + 'width:100%;padding:8px 0;font-weight:bold;margin:4px 0 8px;background:#cba6f7;color:#111;',
-            on: () => {
-                const ns = getNsForReset();
-                const task = ns && ns.qc && ns.qc.task;
-                if (!task || typeof task !== 'object' || !Object.prototype.hasOwnProperty.call(task, 'need')) {
-                    console.warn('[Auto Reset] Chưa có dữ liệu Ns.qc.task.need.');
-                    return;
-                }
-                try {
-                    task.have = task.need;
-                } catch (e) {
-                    console.warn('[Auto Reset] Không thể làm nhanh Dã Tẩu:', e);
-                }
-            }
-        }));
-
-        a.push(hdr('🏅 Tăng điểm chiến trường'));
-        const meritInput = el('input', {
-            type: 'number',
-            min: '0',
-            step: '1',
-            placeholder: 'Nhập số điểm chiến trường',
-            value: '',
-            css: 'flex:1;min-width:0;box-sizing:border-box;padding:7px 8px;background:#222;color:#eee;border:1px solid #666;border-radius:4px;'
-        });
-        const meritButton = el('button', {
-            text: '⬆ TĂNG',
-            css: BCSS + 'flex:0 0 auto;padding:7px 14px;font-weight:bold;background:#89b4fa;color:#111;',
-            on: () => {
-                const raw = String(meritInput.value || '').trim();
-                if (!raw) {
-                    alert('⚠️ Vui lòng nhập số điểm chiến trường.');
-                    meritInput.focus();
-                    return;
-                }
-
-                const meritValue = Number(raw);
-                if (!Number.isSafeInteger(meritValue) || meritValue < 0) {
-                    alert('⚠️ Số điểm phải là số nguyên không âm hợp lệ.');
-                    meritInput.focus();
-                    return;
-                }
-
-                const data = getNsWarForReset();
-                if (!data) {
-                    console.warn('[Auto Reset] Chưa kết nối được Ns.war để cập nhật điểm.');
-                    return;
-                }
-
-                try {
-                    data.war.merit = meritValue;
-                } catch (e) {
-                    console.warn('[Auto Reset] Không thể cập nhật điểm chiến trường:', e);
-                }
-            }
-        });
-        a.push(el('div', {
-            css: 'display:flex;align-items:center;gap:6px;width:100%;margin:4px 0 10px;'
-        }, meritInput, meritButton));
-
+        a.push(note('Lưu ý: Đây là thay đổi phía trình duyệt. Máy chủ có thể kiểm tra hoặc ghi đè lại dữ liệu khi đồng bộ.'));
         return a;
     }
 
@@ -1867,8 +1804,10 @@ T.ready=true;return 1})()`
             text: '🔄 RESET THÁP 2 (Về tầng 0 & reset lượt)',
             css: BCSS + 'width:100%;padding:6px 0;font-weight:bold;margin-bottom:8px;background:#fab387;color:#111;',
             on: () => {
-                doResetThap2();
-                if (typeof draw === 'function') draw();
+                if (confirm("Xác nhận Reset Tháp 2 về tầng 0 và reset số lượt?")) {
+                    doResetThap2();
+                    if (typeof draw === 'function') draw();
+                }
             }
         }));
 
@@ -2194,7 +2133,7 @@ T.ready=true;return 1})()`
 
     // ===== CẬP NHẬT TỪ GITHUB =====
     // GitHub script.user.js phải chứa chính bản gộp này (name=Auto Complete, namespace=vlmod).
-    const VLM_UPDATE_VERSION = '4.4';
+    const VLM_UPDATE_VERSION = '4.2';
     const VLM_UPDATE_CHECK_URL = 'https://raw.githubusercontent.com/kaylypro123/hackidle/refs/heads/main/script.user.js';
     const VLM_UPDATE_INSTALL_URL = 'https://github.com/kaylypro123/hackidle/raw/refs/heads/main/script.user.js';
     let vlmUpdateBusy = false;
