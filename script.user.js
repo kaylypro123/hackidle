@@ -1,12 +1,11 @@
 // ==UserScript==
-// @name         Auto Complete
+// @name         Auto + Mod
 // @namespace    vlmod
-// @version      4.1
+// @version      4.4
 // @description  Auto Hoài Niệm + Ns Mod; chạy nền Worker, tự phục hồi RAF và cập nhật từ GitHub
 // @match        *://hoainiem2003.net/*
 // @match        *://*/*vltk*
 // @match        https://volamidle.pages.dev/*
-// @match        https://hoaniemi2003.net/vltk/*
 // @run-at       document-start
 // @inject-into  page
 // @grant        none
@@ -1657,6 +1656,7 @@ T.ready=true;return 1})()`
         { id: 'event', title: '🎁 Event' },
         { id: 'wash', title: '✨ Tẩy luyện' },
         { id: 'nsmod', title: '🛡️ Ns Mod' },
+        { id: 'reset', title: '🔄 Reset' },
         { id: 'update', title: '🔄 Cập nhật Auto' }
     ];
 
@@ -1700,19 +1700,153 @@ T.ready=true;return 1})()`
 
     function doResetThap2() {
         const t2 = getT2Data();
-        if (t2) {
+        if (!t2) {
+            console.warn('[Auto Reset] Chưa lấy được dữ liệu Tháp 2.');
+            return false;
+        }
+        try {
             t2.cur = 0;
             t2.best = 1;
             t2.runs = 0;
             try { if (window.Ci) window.Ci.dirty = true; } catch (e) { }
-            alert("✅ Đã Reset Tháp 2 thành công!\n- Tầng hiện tại (cur): 0\n- Kỷ lục (best): 1\n- Lượt vào (runs): 0");
             return true;
-        } else {
-            alert("⚠️ Chưa lấy được dữ liệu Tháp 2. Vui lòng đăng nhập vào game hẳn rồi bấm lại!");
+        } catch (e) {
+            console.warn('[Auto Reset] Không thể reset Tháp 2:', e);
             return false;
         }
     }
     window.doResetThap2 = doResetThap2;
+
+    // Lấy đối tượng Ns do game khởi tạo; hỗ trợ cả biến Ns dạng lexical.
+    function getNsForReset() {
+        try {
+            let ns = null;
+            if (typeof window.__vltkGetNs === 'function') ns = window.__vltkGetNs();
+            if (!ns && window.Ns) ns = window.Ns;
+            if (ns && typeof ns === 'object') {
+                window.Ns = ns;
+                return ns;
+            }
+        } catch (e) {
+            console.warn('[Auto Reset] Không đọc được Ns:', e);
+        }
+        return null;
+    }
+
+    // Lấy đúng đối tượng Ns.war do game khởi tạo.
+    function getNsWarForReset() {
+        const ns = getNsForReset();
+        if (ns && ns.war && typeof ns.war === 'object') {
+            return { ns, war: ns.war };
+        }
+        return null;
+    }
+
+    function tabReset() {
+        const a = [];
+
+        a.push(hdr('⚔️ Reset chiến trường'));
+        a.push(el('button', {
+            text: '⚔️ RESET CHIẾN TRƯỜNG',
+            css: BCSS + 'width:100%;padding:8px 0;font-weight:bold;margin:4px 0 8px;background:#fab387;color:#111;',
+            on: () => {
+                const data = getNsWarForReset();
+                if (!data) {
+                    console.warn('[Auto Reset] Chưa kết nối được Ns.war.');
+                    return;
+                }
+                try {
+                    data.war.tk = 0;
+                    data.war.tkWins = 0;
+                } catch (e) {
+                    console.warn('[Auto Reset] Không thể reset chiến trường:', e);
+                }
+            }
+        }));
+
+        a.push(hdr('🛒 Reset cửa hàng'));
+        a.push(el('button', {
+            text: '🛒 RESET CỬA HÀNG',
+            css: BCSS + 'width:100%;padding:8px 0;font-weight:bold;margin:4px 0 8px;background:#a6e3a1;color:#111;',
+            on: () => {
+                const data = getNsWarForReset();
+                if (!data) {
+                    console.warn('[Auto Reset] Chưa kết nối được Ns.war.');
+                    return;
+                }
+                try {
+                    data.war.bought = {};
+                } catch (e) {
+                    console.warn('[Auto Reset] Không thể reset cửa hàng:', e);
+                }
+            }
+        }));
+
+        a.push(hdr('🧭 Làm Dã Tẩu nhanh'));
+        a.push(el('button', {
+            text: '⚡ HOÀN THÀNH DÃ TẨU',
+            css: BCSS + 'width:100%;padding:8px 0;font-weight:bold;margin:4px 0 8px;background:#cba6f7;color:#111;',
+            on: () => {
+                const ns = getNsForReset();
+                const task = ns && ns.qc && ns.qc.task;
+                if (!task || typeof task !== 'object' || !Object.prototype.hasOwnProperty.call(task, 'need')) {
+                    console.warn('[Auto Reset] Chưa có dữ liệu Ns.qc.task.need.');
+                    return;
+                }
+                try {
+                    task.have = task.need;
+                } catch (e) {
+                    console.warn('[Auto Reset] Không thể làm nhanh Dã Tẩu:', e);
+                }
+            }
+        }));
+
+        a.push(hdr('🏅 Tăng điểm chiến trường'));
+        const meritInput = el('input', {
+            type: 'number',
+            min: '0',
+            step: '1',
+            placeholder: 'Nhập số điểm chiến trường',
+            value: '',
+            css: 'flex:1;min-width:0;box-sizing:border-box;padding:7px 8px;background:#222;color:#eee;border:1px solid #666;border-radius:4px;'
+        });
+        const meritButton = el('button', {
+            text: '⬆ TĂNG',
+            css: BCSS + 'flex:0 0 auto;padding:7px 14px;font-weight:bold;background:#89b4fa;color:#111;',
+            on: () => {
+                const raw = String(meritInput.value || '').trim();
+                if (!raw) {
+                    alert('⚠️ Vui lòng nhập số điểm chiến trường.');
+                    meritInput.focus();
+                    return;
+                }
+
+                const meritValue = Number(raw);
+                if (!Number.isSafeInteger(meritValue) || meritValue < 0) {
+                    alert('⚠️ Số điểm phải là số nguyên không âm hợp lệ.');
+                    meritInput.focus();
+                    return;
+                }
+
+                const data = getNsWarForReset();
+                if (!data) {
+                    console.warn('[Auto Reset] Chưa kết nối được Ns.war để cập nhật điểm.');
+                    return;
+                }
+
+                try {
+                    data.war.merit = meritValue;
+                } catch (e) {
+                    console.warn('[Auto Reset] Không thể cập nhật điểm chiến trường:', e);
+                }
+            }
+        });
+        a.push(el('div', {
+            css: 'display:flex;align-items:center;gap:6px;width:100%;margin:4px 0 10px;'
+        }, meritInput, meritButton));
+
+        return a;
+    }
 
     function tabAct() {
         const a = [];
@@ -1733,10 +1867,8 @@ T.ready=true;return 1})()`
             text: '🔄 RESET THÁP 2 (Về tầng 0 & reset lượt)',
             css: BCSS + 'width:100%;padding:6px 0;font-weight:bold;margin-bottom:8px;background:#fab387;color:#111;',
             on: () => {
-                if (confirm("Xác nhận Reset Tháp 2 về tầng 0 và reset số lượt?")) {
-                    doResetThap2();
-                    if (typeof draw === 'function') draw();
-                }
+                doResetThap2();
+                if (typeof draw === 'function') draw();
             }
         }));
 
@@ -2017,6 +2149,7 @@ T.ready=true;return 1})()`
         if (C.tab === 'speed') return tabSpeed();
         if (C.tab === 'event') return tabEvent();
         if (C.tab === 'wash') return tabWash();
+        if (C.tab === 'reset') return tabReset();
         return tabAct();
     }
 
@@ -2061,7 +2194,7 @@ T.ready=true;return 1})()`
 
     // ===== CẬP NHẬT TỪ GITHUB =====
     // GitHub script.user.js phải chứa chính bản gộp này (name=Auto Complete, namespace=vlmod).
-    const VLM_UPDATE_VERSION = '4.1';
+    const VLM_UPDATE_VERSION = '4.4';
     const VLM_UPDATE_CHECK_URL = 'https://raw.githubusercontent.com/kaylypro123/hackidle/refs/heads/main/script.user.js';
     const VLM_UPDATE_INSTALL_URL = 'https://github.com/kaylypro123/hackidle/raw/refs/heads/main/script.user.js';
     let vlmUpdateBusy = false;
@@ -2257,7 +2390,7 @@ T.ready=true;return 1})()`
 
         const titleMap = {
             act: '⚔ HOẠT ĐỘNG', bag: '🎒 QUẢN LÝ TÚI', pot: '⚡ TIỀM NĂNG',
-            speed: '⚡ HACK SPEED', event: '🎁 EVENT & PHÚC DUYÊN', wash: '🛠️ AUTO TẨY LUYỆN'
+            speed: '⚡ HACK SPEED', event: '🎁 EVENT & PHÚC DUYÊN', wash: '🛠️ AUTO TẨY LUYỆN', reset: '🔄 RESET'
         };
 
         const head = el('div', { css: 'display:flex;justify-content:space-between;align-items:center;cursor:move;user-select:none;font-weight:bold;color:#fc6;margin-bottom:6px;background:#232334;padding:4px 8px;border-radius:5px;' },
