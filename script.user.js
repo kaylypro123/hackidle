@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Auto Complete
 // @namespace    vlmod
-// @version      4.2
-// @description  Auto Hoài Niệm + Ns Mod; chạy nền Worker, tự phục hồi RAF và cập nhật từ GitHub
+// @version      4.7
+// @description  Auto Hoài Niệm + Ns Mod; Dã Tẩu tự nhận thưởng, chạy nền, cập nhật qua Updater
 // @match        *://hoainiem2003.net/*
 // @match        *://*/*vltk*
 // @match        https://volamidle.pages.dev/*
@@ -10,8 +10,9 @@
 // @run-at       document-start
 // @inject-into  page
 // @grant        none
-// @updateURL    https://github.com/kaylypro123/hackidle/raw/refs/heads/main/script.user.js
-// @downloadURL  https://github.com/kaylypro123/hackidle/raw/refs/heads/main/script.user.js
+// @updateURL    https://raw.githubusercontent.com/kaylypro123/hackidle/refs/heads/main/script.user.js
+// @downloadURL  https://raw.githubusercontent.com/kaylypro123/hackidle/refs/heads/main/script.user.js
+// @supportURL   https://github.com/kaylypro123/hackidle
 // ==/UserScript==
 (function () {
     'use strict';
@@ -1701,87 +1702,236 @@ T.ready=true;return 1})()`
 
     function doResetThap2() {
         const t2 = getT2Data();
-        if (t2) {
+        if (!t2) {
+            console.warn('[Auto Reset] Chưa lấy được dữ liệu Tháp 2.');
+            return false;
+        }
+        try {
             t2.cur = 0;
             t2.best = 1;
             t2.runs = 0;
             try { if (window.Ci) window.Ci.dirty = true; } catch (e) { }
-            alert("✅ Đã Reset Tháp 2 thành công!\n- Tầng hiện tại (cur): 0\n- Kỷ lục (best): 1\n- Lượt vào (runs): 0");
             return true;
-        } else {
-            alert("⚠️ Chưa lấy được dữ liệu Tháp 2. Vui lòng đăng nhập vào game hẳn rồi bấm lại!");
+        } catch (e) {
+            console.warn('[Auto Reset] Không thể reset Tháp 2:', e);
             return false;
         }
     }
     window.doResetThap2 = doResetThap2;
 
-    // Lấy đúng đối tượng Ns.war do game khởi tạo; hỗ trợ cả biến Ns dạng lexical.
-    function getNsWarForReset() {
+    // Lấy đối tượng Ns do game khởi tạo; hỗ trợ cả biến Ns dạng lexical.
+    function getNsForReset() {
         try {
             let ns = null;
-            if (typeof window.__vltkGetNs === 'function') {
-                ns = window.__vltkGetNs();
-            }
+            if (typeof window.__vltkGetNs === 'function') ns = window.__vltkGetNs();
             if (!ns && window.Ns) ns = window.Ns;
-            if (ns && ns.war && typeof ns.war === 'object') {
+            if (ns && typeof ns === 'object') {
                 window.Ns = ns;
-                return { ns, war: ns.war };
+                return ns;
             }
         } catch (e) {
-            console.warn('[Auto Reset] Không đọc được Ns.war:', e);
+            console.warn('[Auto Reset] Không đọc được Ns:', e);
         }
         return null;
     }
 
+    // Lấy đúng đối tượng Ns.war do game khởi tạo.
+    function getNsWarForReset() {
+        const ns = getNsForReset();
+        if (ns && ns.war && typeof ns.war === 'object') {
+            return { ns, war: ns.war };
+        }
+        return null;
+    }
+
+    // Tự bấm nút nhận thưởng Dã Tẩu ngay khi game tạo nó.
+    // HTMLElement.click() kích hoạt handler kể cả khi nút nằm trong khung đang bị ẩn,
+    // miễn là phần tử đã tồn tại trong DOM và không bị disabled.
+    function autoClaimQcXpReward(timeoutMs, completeTask) {
+        const selector = 'button[data-qcp="xp"]';
+        const maxWait = Math.max(1000, Number(timeoutMs) || 12000);
+        const startedAt = Date.now();
+        let done = false;
+        let observer = null;
+        let timer = null;
+        let poll = null;
+
+        const cleanup = () => {
+            if (observer) {
+                try { observer.disconnect(); } catch (e) { }
+                observer = null;
+            }
+            if (timer) clearTimeout(timer);
+            if (poll) clearInterval(poll);
+            timer = null;
+            poll = null;
+        };
+
+        const tryClaim = () => {
+            if (done) return true;
+            let buttons = [];
+            try { buttons = Array.from(document.querySelectorAll(selector)); } catch (e) { }
+            // Trường hợp game giữ nhiều nút (một nút cũ disabled và một nút mới active),
+            // chọn nút còn gắn trong DOM và đang được phép bấm.
+            const button = buttons.find(b => b && b.isConnected &&
+                !b.disabled && b.getAttribute('aria-disabled') !== 'true');
+            if (!button) return false;
+
+            try {
+                button.click();
+                done = true;
+                cleanup();
+                console.info('[Auto Dã Tẩu] Đã gửi thao tác nhận thưởng qua nút data-qcp="xp".');
+                return true;
+            } catch (e) {
+                console.warn('[Auto Dã Tẩu] Không bấm được nút nhận thưởng:', e);
+                return false;
+            }
+        };
+
+        // QUAN TRỌNG: gắn theo dõi trước khi hoàn thành task để không bỏ lỡ
+        // nút nhận thưởng mà game thêm vào DOM ngay sau khi cập nhật task.have.
+        try {
+            observer = new MutationObserver(() => {
+                if (tryClaim()) return;
+                if (Date.now() - startedAt >= maxWait) cleanup();
+            });
+            observer.observe(document.documentElement || document, {
+                childList: true,
+                subtree: true,
+                attributes: true,
+                attributeFilter: ['disabled', 'aria-disabled', 'class', 'style', 'data-qcp']
+            });
+        } catch (e) { }
+
+        // Poll dự phòng, bao gồm trường hợp game chỉ bật nút bằng cách đổi thuộc tính.
+        poll = setInterval(() => {
+            if (tryClaim() || Date.now() - startedAt >= maxWait) cleanup();
+        }, 50);
+        timer = setTimeout(() => {
+            cleanup();
+            if (!done) console.warn('[Auto Dã Tẩu] Không tìm thấy nút nhận thưởng đang hoạt động trong ' + maxWait + ' ms. Có thể game chưa tạo nút data-qcp="xp" hoặc yêu cầu mở giao diện thưởng.');
+        }, maxWait);
+
+        // Chỉ sau khi đã bật observer/poll mới cập nhật task hoàn thành.
+        try {
+            if (typeof completeTask === 'function') completeTask();
+        } catch (e) {
+            cleanup();
+            console.warn('[Auto Dã Tẩu] Không thể hoàn thành nhiệm vụ:', e);
+            return false;
+        }
+
+        // Thử lần nữa ngay sau khi set task.have; nếu game tạo nút đồng bộ thì nhận ngay.
+        tryClaim();
+        return true;
+    }
+
     function tabReset() {
         const a = [];
-        a.push(hdr('🔄 RESET DỮ LIỆU CHIẾN TRƯỜNG & CỬA HÀNG'));
-        a.push(note('Các thao tác ghi trực tiếp vào Ns.war trong bộ nhớ game hiện tại. Nếu máy chủ đồng bộ lại dữ liệu, giá trị có thể được khôi phục.'));
 
         a.push(hdr('⚔️ Reset chiến trường'));
-        a.push(note('Đặt tk = 0 và tkWins = 0.'));
         a.push(el('button', {
             text: '⚔️ RESET CHIẾN TRƯỜNG',
             css: BCSS + 'width:100%;padding:8px 0;font-weight:bold;margin:4px 0 8px;background:#fab387;color:#111;',
             on: () => {
                 const data = getNsWarForReset();
                 if (!data) {
-                    alert('⚠️ Chưa lấy được Ns.war. Hãy vào game, chờ nhân vật tải xong rồi thử lại.');
+                    console.warn('[Auto Reset] Chưa kết nối được Ns.war.');
                     return;
                 }
-                if (!confirm('Xác nhận reset chiến trường?\n\n- tk = 0\n- tkWins = 0')) return;
                 try {
                     data.war.tk = 0;
                     data.war.tkWins = 0;
-                    alert('✅ Đã đặt lại dữ liệu chiến trường trong Ns.war:\n- tk = ' + data.war.tk + '\n- tkWins = ' + data.war.tkWins);
                 } catch (e) {
-                    alert('❌ Không thể reset chiến trường: ' + (e && e.message ? e.message : e));
+                    console.warn('[Auto Reset] Không thể reset chiến trường:', e);
                 }
             }
         }));
 
         a.push(hdr('🛒 Reset cửa hàng'));
-        a.push(note('Đặt Ns.war.bought = {}.'));
         a.push(el('button', {
             text: '🛒 RESET CỬA HÀNG',
             css: BCSS + 'width:100%;padding:8px 0;font-weight:bold;margin:4px 0 8px;background:#a6e3a1;color:#111;',
             on: () => {
                 const data = getNsWarForReset();
                 if (!data) {
-                    alert('⚠️ Chưa lấy được Ns.war. Hãy vào game, chờ nhân vật tải xong rồi thử lại.');
+                    console.warn('[Auto Reset] Chưa kết nối được Ns.war.');
                     return;
                 }
-                if (!confirm('Xác nhận reset dữ liệu mua hàng?\n\nThao tác: Ns.war.bought = {}')) return;
                 try {
                     data.war.bought = {};
-                    alert('✅ Đã đặt Ns.war.bought = {} trong bộ nhớ game hiện tại.');
                 } catch (e) {
-                    alert('❌ Không thể reset cửa hàng: ' + (e && e.message ? e.message : e));
+                    console.warn('[Auto Reset] Không thể reset cửa hàng:', e);
                 }
             }
         }));
 
-        a.push(note('Lưu ý: Đây là thay đổi phía trình duyệt. Máy chủ có thể kiểm tra hoặc ghi đè lại dữ liệu khi đồng bộ.'));
+        a.push(hdr('🧭 Làm Dã Tẩu nhanh'));
+        a.push(el('button', {
+            text: '⚡ HOÀN THÀNH DÃ TẨU',
+            css: BCSS + 'width:100%;padding:8px 0;font-weight:bold;margin:4px 0 8px;background:#cba6f7;color:#111;',
+            on: () => {
+                const ns = getNsForReset();
+                const task = ns && ns.qc && ns.qc.task;
+                if (!task || typeof task !== 'object' || !Object.prototype.hasOwnProperty.call(task, 'need')) {
+                    console.warn('[Auto Reset] Chưa có dữ liệu Ns.qc.task.need.');
+                    return;
+                }
+                try {
+                    autoClaimQcXpReward(12000, () => {
+                        task.have = task.need;
+                    });
+                } catch (e) {
+                    console.warn('[Auto Reset] Không thể làm nhanh/nhận thưởng Dã Tẩu:', e);
+                }
+            }
+        }));
+
+        a.push(hdr('🏅 Tăng điểm chiến trường'));
+        const meritInput = el('input', {
+            type: 'number',
+            min: '0',
+            step: '1',
+            placeholder: 'Nhập số điểm chiến trường',
+            value: '',
+            css: 'flex:1;min-width:0;box-sizing:border-box;padding:7px 8px;background:#222;color:#eee;border:1px solid #666;border-radius:4px;'
+        });
+        const meritButton = el('button', {
+            text: '⬆ TĂNG',
+            css: BCSS + 'flex:0 0 auto;padding:7px 14px;font-weight:bold;background:#89b4fa;color:#111;',
+            on: () => {
+                const raw = String(meritInput.value || '').trim();
+                if (!raw) {
+                    alert('⚠️ Vui lòng nhập số điểm chiến trường.');
+                    meritInput.focus();
+                    return;
+                }
+
+                const meritValue = Number(raw);
+                if (!Number.isSafeInteger(meritValue) || meritValue < 0) {
+                    alert('⚠️ Số điểm phải là số nguyên không âm hợp lệ.');
+                    meritInput.focus();
+                    return;
+                }
+
+                const data = getNsWarForReset();
+                if (!data) {
+                    console.warn('[Auto Reset] Chưa kết nối được Ns.war để cập nhật điểm.');
+                    return;
+                }
+
+                try {
+                    data.war.merit = meritValue;
+                } catch (e) {
+                    console.warn('[Auto Reset] Không thể cập nhật điểm chiến trường:', e);
+                }
+            }
+        });
+        a.push(el('div', {
+            css: 'display:flex;align-items:center;gap:6px;width:100%;margin:4px 0 10px;'
+        }, meritInput, meritButton));
+
         return a;
     }
 
@@ -1804,10 +1954,8 @@ T.ready=true;return 1})()`
             text: '🔄 RESET THÁP 2 (Về tầng 0 & reset lượt)',
             css: BCSS + 'width:100%;padding:6px 0;font-weight:bold;margin-bottom:8px;background:#fab387;color:#111;',
             on: () => {
-                if (confirm("Xác nhận Reset Tháp 2 về tầng 0 và reset số lượt?")) {
-                    doResetThap2();
-                    if (typeof draw === 'function') draw();
-                }
+                doResetThap2();
+                if (typeof draw === 'function') draw();
             }
         }));
 
@@ -2131,83 +2279,52 @@ T.ready=true;return 1})()`
         menuDock.style.top = rect.top + 'px';
     }
 
-    // ===== CẬP NHẬT TỪ GITHUB =====
-    // GitHub script.user.js phải chứa chính bản gộp này (name=Auto Complete, namespace=vlmod).
-    const VLM_UPDATE_VERSION = '4.2';
-    const VLM_UPDATE_CHECK_URL = 'https://raw.githubusercontent.com/kaylypro123/hackidle/refs/heads/main/script.user.js';
-    const VLM_UPDATE_INSTALL_URL = 'https://github.com/kaylypro123/hackidle/raw/refs/heads/main/script.user.js';
+    // ===== CẬP NHẬT QUA BOOTSTRAP (Stay / Tampermonkey) =====
+    // Không mở trang GitHub. Bootstrap v1.4 tải, xác minh, lưu code và tự F5.
+    const VLM_UPDATE_VERSION = '4.7';
     let vlmUpdateBusy = false;
 
-    function vlmCompareVersions(a, b) {
-        const aa = String(a || '0').split('.').map(x => parseInt(x, 10) || 0);
-        const bb = String(b || '0').split('.').map(x => parseInt(x, 10) || 0);
-        const n = Math.max(aa.length, bb.length);
-        for (let i = 0; i < n; i++) {
-            const av = aa[i] || 0, bv = bb[i] || 0;
-            if (av > bv) return 1;
-            if (av < bv) return -1;
-        }
-        return 0;
+    function vlmGetUpdaterBridge() {
+        try {
+            const bridge = window.__VLMOD_UPDATER_BRIDGE;
+            if (bridge && typeof bridge.check === 'function' && typeof bridge.update === 'function') return bridge;
+        } catch (e) { }
+        return null;
     }
 
-    async function vlmCheckForUpdate() {
+    async function vlmRunUpdater(button) {
         if (vlmUpdateBusy) return;
         vlmUpdateBusy = true;
+        const oldText = button ? button.textContent : '';
+        if (button) {
+            button.disabled = true;
+            button.textContent = '⏳ ĐANG TẢI BẢN MỚI...';
+        }
         try {
-            const response = await fetch(VLM_UPDATE_CHECK_URL + '?_=' + Date.now(), {
-                method: 'GET',
-                cache: 'no-store',
-                credentials: 'omit'
-            });
-            if (!response.ok) throw new Error('GitHub trả về HTTP ' + response.status);
-
-            const remoteCode = await response.text();
-            const versionMatch = remoteCode.match(/^\s*\/\/\s*@version\s+([^\r\n]+)/m);
-            const nameMatch = remoteCode.match(/^\s*\/\/\s*@name\s+([^\r\n]+)/m);
-            const namespaceMatch = remoteCode.match(/^\s*\/\/\s*@namespace\s+([^\r\n]+)/m);
-
-            if (!versionMatch || !nameMatch || !namespaceMatch) {
-                throw new Error('File GitHub không có metadata Userscript hợp lệ.');
+            const bridge = vlmGetUpdaterBridge();
+            if (!bridge) {
+                throw new Error('Chưa có Updater Bootstrap v1.4. Hãy cài Updater v1.4 và chỉ bật Updater; tắt script Auto đầy đủ cài riêng.');
             }
-
-            const remoteVersion = versionMatch[1].trim();
-            const remoteName = nameMatch[1].trim();
-            const remoteNamespace = namespaceMatch[1].trim();
-
-            // Chặn tuyệt đối việc tải nhầm file Ns Mod riêng (script.user.js cũ).
-            if (remoteName !== 'Auto Complete' || remoteNamespace !== 'vlmod' ||
-                !remoteCode.includes('window.__vltkOpenPanel') ||
-                !remoteCode.includes('window.__VLM')) {
-                alert(
-                    'Không cập nhật vì file trên GitHub hiện không phải bản gộp!\n\n' +
-                    'Tên tìm thấy: ' + remoteName + '\n' +
-                    'Namespace: ' + remoteNamespace + '\n' +
-                    'Bạn cần thay nội dung GitHub script.user.js bằng file Auto Hoài Niệm + Ns Mod v4.1 trước.'
-                );
+            const result = await bridge.update(VLM_UPDATE_VERSION);
+            if (result && result.updated) {
+                if (button) button.textContent = '✅ ĐÃ LƯU v' + result.version + ' · ĐANG TẢI LẠI';
+                // Bootstrap tự reload sau khi lưu; không mở GitHub.
                 return;
             }
-
-            const cmp = vlmCompareVersions(remoteVersion, VLM_UPDATE_VERSION);
-            if (cmp <= 0) {
-                alert('Auto đang dùng v' + VLM_UPDATE_VERSION + '. GitHub hiện là v' + remoteVersion + '. Không có bản mới hơn.');
-                return;
-            }
-
-            const yes = confirm(
-                'Đã tìm thấy Auto Hoài Niệm + Ns Mod v' + remoteVersion +
-                '\nPhiên bản hiện tại: v' + VLM_UPDATE_VERSION +
-                '\n\nMở trình cài Tampermonkey để cập nhật ngay?'
-            );
-            if (!yes) return;
-
-            // Mở file .user.js từ GitHub để Tampermonkey hiển thị trang cài/cập nhật.
-            window.open(VLM_UPDATE_INSTALL_URL, '_blank', 'noopener');
-            alert('Đã mở file cập nhật GitHub. Trong Tampermonkey, bấm Update/Cập nhật nếu được hỏi, sau đó tải lại game.');
+            const latest = result && result.version ? result.version : 'không rõ';
+            if (button) button.textContent = '✅ ĐÃ LÀ BẢN MỚI NHẤT';
+            alert('Auto hiện tại: v' + VLM_UPDATE_VERSION + '. GitHub: v' + latest + '. Không có bản mới hơn.');
         } catch (err) {
-            alert('Không kiểm tra được cập nhật GitHub: ' + (err && err.message ? err.message : err) +
-                '\n\nKiểm tra kết nối mạng và quyền truy cập repository.');
+            if (button) button.textContent = '⚠ LỖI CẬP NHẬT';
+            alert('Cập nhật thất bại: ' + (err && err.message ? err.message : err));
         } finally {
-            vlmUpdateBusy = false;
+            setTimeout(() => {
+                if (button && button.isConnected) {
+                    button.disabled = false;
+                    button.textContent = oldText || 'Cập nhật';
+                }
+                vlmUpdateBusy = false;
+            }, 5000);
         }
     }
 
@@ -2237,8 +2354,7 @@ T.ready=true;return 1})()`
         updateBtn.textContent = 'Cập nhật';
         updateBtn.style.cssText = 'flex:0 0 auto;padding:7px 10px;background:#238636;color:#fff;border:0;border-radius:6px;font-weight:bold;cursor:pointer;';
         updateBtn.onclick = function () {
-            // Gọi trực tiếp từ thao tác click để tránh trình duyệt chặn popup.
-            window.open(VLM_UPDATE_INSTALL_URL, '_blank');
+            vlmRunUpdater(updateBtn);
         };
 
         const closeBtn = document.createElement('button');
@@ -2263,26 +2379,14 @@ T.ready=true;return 1})()`
         if (vlmUpdateBusy || !document.body) return;
         vlmUpdateBusy = true;
         try {
-            const response = await fetch(VLM_UPDATE_CHECK_URL + '?_=' + Date.now(), {
-                method: 'GET', cache: 'no-store', credentials: 'omit'
-            });
-            if (!response.ok) throw new Error('HTTP ' + response.status);
-            const remoteCode = await response.text();
-            const versionMatch = remoteCode.match(/^\s*\/\/\s*@version\s+([^\r\n]+)/m);
-            const nameMatch = remoteCode.match(/^\s*\/\/\s*@name\s+([^\r\n]+)/m);
-            const namespaceMatch = remoteCode.match(/^\s*\/\/\s*@namespace\s+([^\r\n]+)/m);
-            if (!versionMatch || !nameMatch || !namespaceMatch) return;
-
-            const remoteVersion = versionMatch[1].trim();
-            if (nameMatch[1].trim() !== 'Auto Complete' || namespaceMatch[1].trim() !== 'vlmod' ||
-                !remoteCode.includes('window.__vltkOpenPanel') || !remoteCode.includes('window.__VLM')) return;
-
-            if (vlmCompareVersions(remoteVersion, VLM_UPDATE_VERSION) > 0) {
-                vlmShowUpdateNotice(remoteVersion);
+            const bridge = vlmGetUpdaterBridge();
+            if (!bridge) return; // thiếu Bootstrap thì không thử fetch trực tiếp, tránh lỗi CORS.
+            const result = await bridge.check(VLM_UPDATE_VERSION);
+            if (result && result.newer && result.version) {
+                vlmShowUpdateNotice(String(result.version));
             }
         } catch (err) {
-            // Kiểm tra nền thất bại thì im lặng; không làm gián đoạn game.
-            console.warn('[Auto] Không kiểm tra được cập nhật GitHub:', err && err.message ? err.message : err);
+            console.warn('[Auto] Không kiểm tra được cập nhật:', err && err.message ? err.message : err);
         } finally {
             vlmUpdateBusy = false;
         }
@@ -2293,7 +2397,7 @@ T.ready=true;return 1})()`
         menuDock.style.display = 'none';
 
         if (tabId === 'update') {
-            vlmCheckForUpdate();
+            vlmRunUpdater(null);
             return;
         }
 
