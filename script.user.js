@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Auto Complete
 // @namespace    vlmod
-// @version      5.2
-// @description  Auto Hoài Niệm + Ns Mod; Dã Tẩu nhận EXP trước, tự làm mới nhiệm vụ; chạy nền, cập nhật qua Updater
+// @version      5.3
+// @description  Auto Hoài Niệm + Ns Mod; Auto Dã Tẩu có Start/Stop, xác nhận từng lần nhận EXP; cập nhật qua Bootstrap
 // @match        *://hoainiem2003.net/*
 // @match        *://*/*vltk*
 // @match        https://volamidle.pages.dev/*
@@ -10,9 +10,6 @@
 // @run-at       document-start
 // @inject-into  page
 // @grant        none
-// @updateURL    https://raw.githubusercontent.com/kaylypro123/hackidle/refs/heads/main/script.user.js
-// @downloadURL  https://raw.githubusercontent.com/kaylypro123/hackidle/refs/heads/main/script.user.js
-// @supportURL   https://github.com/kaylypro123/hackidle
 // ==/UserScript==
 (function () {
     'use strict';
@@ -1744,11 +1741,15 @@ T.ready=true;return 1})()`
         return null;
     }
 
-    // Dã Tẩu tự động theo đúng luồng nhận thưởng của game:
-    // 1) hoàn thành tiến độ + chọn EXP; 2) chờ và bấm nút nhận EXP;
-    // 3) để game xử lý claim; 4) tự kích hoạt lại tab Nhiệm vụ/Dã Tẩu để nạp bước kế tiếp.
-    // Không tự tăng qc.step hoặc xóa task.have trước khi game xác nhận nhận thưởng.
+    // AUTO DÃ TẨU: chỉ làm bước kế tiếp sau khi trạng thái nhiệm vụ đổi.
+    // Thứ tự theo luồng game: hoàn thành task.have -> mở popup eb("qc") -> bấm nút XP -> chờ game xác nhận.
     let daTauAutoBusy = false;
+    let daTauAutoRunning = false;
+    let daTauAutoTimer = null;
+    let daTauAutoToken = 0;
+    let daTauAutoCount = 0;
+    let daTauAutoUI = null;
+    let daTauPendingCancel = null;
 
     function daTauGetVisibleAction(labelList) {
         const normalize = value => String(value || '')
@@ -1773,7 +1774,7 @@ T.ready=true;return 1})()`
                 const rawLabel = node.getAttribute('aria-label') || node.getAttribute('title') || '';
                 const txt = normalize(rawText);
                 const aria = normalize(rawLabel);
-                const containsDauTau = (wanted.has('da tau') || wanted.has('nhiem vu da tau') || wanted.has('nhiem vu da tau')) &&
+                const containsDauTau = (wanted.has('da tau') || wanted.has('nhiem vu da tau')) &&
                     ((txt.includes('da tau') && txt.length <= 60) || (aria.includes('da tau') && aria.length <= 60));
                 const containsQuest = wanted.has('nhiem vu') &&
                     ((txt.includes('nhiem vu') && txt.length <= 28) || (aria.includes('nhiem vu') && aria.length <= 28));
@@ -1789,7 +1790,7 @@ T.ready=true;return 1})()`
                     for (let i = 0; parent && i < 4; i++, parent = parent.parentElement) {
                         let pcs = null;
                         try { pcs = window.getComputedStyle(parent); } catch (e) {}
-                        if (parent.matches && parent.matches(actionSelector) || (pcs && pcs.cursor === 'pointer')) {
+                        if ((parent.matches && parent.matches(actionSelector)) || (pcs && pcs.cursor === 'pointer')) {
                             action = parent;
                             break;
                         }
@@ -1814,7 +1815,6 @@ T.ready=true;return 1})()`
         const init = { bubbles: true, cancelable: true, view: window,
             clientX: Math.round(r.left + r.width / 2), clientY: Math.round(r.top + r.height / 2) };
         try {
-            // Gửi chuỗi sự kiện chuột/touch giống thao tác người chơi, sau đó click đúng một lần.
             ['pointerdown', 'mousedown', 'pointerup', 'mouseup'].forEach(type => {
                 try { element.dispatchEvent(new MouseEvent(type, init)); } catch (e) {}
             });
@@ -1832,9 +1832,27 @@ T.ready=true;return 1})()`
         try { if (ns && typeof ns.render === 'function') ns.render(); } catch (e) {}
     }
 
-    // Tự mở giao diện nhiệm vụ nếu tab Dã Tẩu chưa được render, rồi chọn Dã Tẩu.
-    // Hàm trả về true nếu đã tìm thấy/kích hoạt được ít nhất một nút liên quan.
+    function daTauCallQcPopup() {
+        try {
+            // Đây là hàm mở popup Dã Tẩu đúng theo luồng của game.
+            if (typeof eb === 'function') { eb('qc'); return true; }
+        } catch (e) {}
+        try {
+            if (typeof window.eb === 'function') { window.eb('qc'); return true; }
+        } catch (e) {}
+        return false;
+    }
+
     function daTauOpenQuestUI(done) {
+        // Ưu tiên API gốc từ game; nếu bản game không expose eb thì mới dò nút giao diện.
+        if (daTauCallQcPopup()) {
+            setTimeout(() => {
+                daTauRefreshNs();
+                if (done) done(true);
+            }, 250);
+            return true;
+        }
+
         const dauLabels = ['Dã Tẩu', 'Nhiệm vụ Dã Tẩu', 'Nhiệm vụ: Dã Tẩu'];
         const questLabels = ['Nhiệm vụ'];
         let started = false;
@@ -1861,20 +1879,41 @@ T.ready=true;return 1})()`
     function daTauFindXpButton() {
         let buttons = [];
         try { buttons = Array.from(document.querySelectorAll('button[data-qcp="xp"]')); } catch (e) {}
-        return buttons.find(button => button && button.isConnected && !button.disabled &&
-            button.getAttribute('aria-disabled') !== 'true') || null;
+        return buttons.find(button => {
+            if (!button || !button.isConnected || button.disabled || button.getAttribute('aria-disabled') === 'true') return false;
+            try {
+                const r = button.getBoundingClientRect();
+                const cs = window.getComputedStyle ? window.getComputedStyle(button) : null;
+                return !!(r && r.width > 0 && r.height > 0 && button.getClientRects().length &&
+                    (!cs || (cs.display !== 'none' && cs.visibility !== 'hidden' && Number(cs.opacity) !== 0)));
+            } catch (e) { return true; }
+        }) || null;
     }
 
     function daTauGetState() {
         const ns = getNsForReset();
         const qc = ns && ns.qc;
         const task = qc && qc.task;
-        return {
-            ns, qc, task,
-            step: qc && Number(qc.step),
-            need: task && task.need,
-            have: task && task.have
-        };
+        return { ns, qc, task, step: qc && Number(qc.step), need: task && task.need, have: task && task.have };
+    }
+
+    function daTauStateSignature(state) {
+        if (!state || !state.qc || !state.task) return '';
+        const fields = [];
+        try {
+            Object.keys(state.task).sort().forEach(key => {
+                let value;
+                try { value = state.task[key]; } catch (e) { value = '[getter-error]'; }
+                if (value === null || ['string', 'number', 'boolean', 'undefined'].includes(typeof value)) {
+                    fields.push([key, value]);
+                } else if (Array.isArray(value)) {
+                    fields.push([key, 'array', value.length]);
+                } else {
+                    fields.push([key, Object.prototype.toString.call(value)]);
+                }
+            });
+        } catch (e) {}
+        return JSON.stringify([state.step, fields]);
     }
 
     function daTauLogDiagnostics(prefix) {
@@ -1895,145 +1934,229 @@ T.ready=true;return 1})()`
             });
         } catch (e) {}
         console.warn(prefix || '[Auto Dã Tẩu] Chẩn đoán:', {
-            connected: !!qc,
-            step: qc && qc.step,
-            task: state.task,
-            qcKeys: qc ? Object.keys(qc) : [],
-            taskKeys: state.task ? Object.keys(state.task) : [],
+            connected: !!qc, step: qc && qc.step, task: state.task,
+            qcKeys: qc ? Object.keys(qc) : [], taskKeys: state.task ? Object.keys(state.task) : [],
             qcMethods: Array.from(new Set(methods))
         });
     }
 
-    function runDaTauAutoFlow() {
-        if (daTauAutoBusy) {
-            console.info('[Auto Dã Tẩu] Đang xử lý nhiệm vụ trước, vui lòng đợi.');
-            return false;
+    function daTauSetUiStatus(message) {
+        const ui = daTauAutoUI;
+        if (!ui) return;
+        if (ui.status && ui.status.isConnected) ui.status.textContent = message || '';
+        if (ui.start && ui.start.isConnected) {
+            ui.start.disabled = !!daTauAutoRunning;
+            ui.start.textContent = daTauAutoRunning ? '▶ AUTO ĐANG CHẠY' : '▶ CHẠY AUTO DÃ TẨU';
         }
-        let state = daTauGetState();
-        if (!state.qc || !state.task || typeof state.task !== 'object' ||
-            state.task.need === undefined || state.task.need === null) {
-            console.warn('[Auto Dã Tẩu] Chưa có Ns.qc.task.need.');
-            return false;
+        if (ui.stop && ui.stop.isConnected) {
+            ui.stop.disabled = !daTauAutoRunning;
+            ui.stop.textContent = daTauAutoRunning ? '⏹ DỪNG AUTO' : '⏹ ĐÃ DỪNG';
+        }
+    }
+
+    function runDaTauAutoFlow() {
+        if (daTauAutoBusy) return Promise.resolve({ ok: false, claimed: false, message: 'Đang xử lý bước trước.' });
+        const initial = daTauGetState();
+        if (!initial.qc || !initial.task || typeof initial.task !== 'object' ||
+            initial.task.need === undefined || initial.task.need === null) {
+            return Promise.resolve({ ok: false, claimed: false, message: 'Chưa có Ns.qc.task.need.' });
         }
 
         daTauAutoBusy = true;
-        const oldStep = Number(state.step || 0);
-        const oldTask = state.task;
-        let rewardClicked = false;
-        let panelTried = false;
-        let poll = null;
-        let observer = null;
-        let timeout = null;
-        const startedAt = Date.now();
-        const maxWait = 15000;
+        return new Promise(resolve => {
+            let buttonPoll = null;
+            let progressPoll = null;
+            let observer = null;
+            let timeout = null;
+            let claimed = false;
+            let baseline = null;
+            let clickAt = 0;
+            let refreshedAfterClick = false;
+            let finished = false;
+            let cancelBeforeClaim = null;
 
-        const finish = (message, isError) => {
-            if (poll) clearInterval(poll);
-            if (timeout) clearTimeout(timeout);
-            if (observer) { try { observer.disconnect(); } catch (e) {} }
-            poll = timeout = observer = null;
-            daTauAutoBusy = false;
-            if (message) (isError ? console.warn : console.info)(message);
-        };
-
-        const afterClaim = () => {
-            // Cho handler nhận thưởng của game chạy trước; không tự tăng step ở đây.
-            // Luôn tự kích hoạt lại tab Nhiệm vụ/Dã Tẩu, kể cả khi step đã đổi,
-            // vì một số bản game chỉ nạp task mới khi tab Dã Tẩu được mở lại.
-            setTimeout(() => {
-                daTauRefreshNs();
-                daTauOpenQuestUI((tabActivated) => {
-                    setTimeout(() => {
-                        daTauRefreshNs();
-                        const latest = daTauGetState();
-                        const moved = (Number.isFinite(latest.step) && latest.step > oldStep) ||
-                            (latest.task && latest.task !== oldTask);
-                        if (moved) {
-                            finish('[Auto Dã Tẩu] Đã nhận EXP và tự kích hoạt Dã Tẩu. Bước: ' + oldStep + ' → ' + latest.step, false);
-                        } else {
-                            daTauLogDiagnostics('[Auto Dã Tẩu] Đã bấm nhận EXP và thử kích hoạt tab Dã Tẩu (' + (tabActivated ? 'đã gửi click' : 'không tìm thấy nút giao diện') + '), nhưng game chưa đổi task/step. Thông tin để dò handler thật:');
-                            finish('[Auto Dã Tẩu] Đã gửi lệnh nhận EXP và tự làm mới Dã Tẩu, nhưng game chưa xác nhận nhiệm vụ mới. Không tự ép step để tránh mất EXP.', true);
-                        }
-                    }, 700);
-                });
-            }, 500);
-        };
-
-        const tryClaim = () => {
-            if (rewardClicked) return true;
-            const button = daTauFindXpButton();
-            if (!button) return false;
-            try {
-                button.click();
-                rewardClicked = true;
-                if (poll) clearInterval(poll);
+            const finish = (ok, message, didClaim) => {
+                if (finished) return;
+                finished = true;
+                if (daTauPendingCancel === cancelBeforeClaim) daTauPendingCancel = null;
+                if (buttonPoll) clearInterval(buttonPoll);
+                if (progressPoll) clearInterval(progressPoll);
+                if (timeout) clearTimeout(timeout);
                 if (observer) { try { observer.disconnect(); } catch (e) {} }
-                poll = observer = null;
-                console.info('[Auto Dã Tẩu] Đã bấm nút nhận thưởng EXP. Đang chờ game xác nhận...');
-                afterClaim();
-                return true;
-            } catch (e) {
-                console.warn('[Auto Dã Tẩu] Không bấm được nút nhận EXP:', e);
-                return false;
-            }
-        };
+                buttonPoll = progressPoll = timeout = observer = null;
+                daTauAutoBusy = false;
+                if (message) (ok ? console.info : console.warn)(message);
+                resolve({ ok: !!ok, claimed: !!didClaim, message: message || '' });
+            };
 
-        const beginWaitingReward = () => {
-            // Hoàn thành và chọn EXP; tuyệt đối không tăng step/reset have trước claim.
-            state = daTauGetState();
-            if (!state.qc || !state.task) {
-                finish('[Auto Dã Tẩu] Dữ liệu Dã Tẩu bị thay đổi trước khi hoàn thành.', true);
-                return;
-            }
+            // Nút Dừng có thể hủy an toàn khi chưa gửi click nhận EXP.
+            // Nếu click đã gửi, để bước xác nhận kết thúc nhưng không chạy vòng kế tiếp.
+            cancelBeforeClaim = () => {
+                if (!claimed) finish(false, '[Auto Dã Tẩu] Đã dừng trước khi bấm nhận EXP.', false);
+            };
+            daTauPendingCancel = cancelBeforeClaim;
+
+            const hasProgressed = () => {
+                const latest = daTauGetState();
+                if (!latest.qc || !latest.task) return false;
+                const stepChanged = Number.isFinite(latest.step) && Number.isFinite(baseline.step) && latest.step !== baseline.step;
+                const taskReplaced = latest.task !== baseline.task;
+                const taskChanged = daTauStateSignature(latest) !== baseline.signature;
+                return stepChanged || taskReplaced || taskChanged;
+            };
+
+            const waitForProgress = () => {
+                progressPoll = setInterval(() => {
+                    if (hasProgressed()) {
+                        const latest = daTauGetState();
+                        finish(true, '[Auto Dã Tẩu] Game đã chuyển nhiệm vụ/step sau khi nhận EXP. Step hiện tại: ' + latest.step, true);
+                        return;
+                    }
+                    const elapsed = Date.now() - clickAt;
+                    // Đề nghị game làm mới popup một lần sau click, nhưng không bấm nhận lần hai.
+                    if (!refreshedAfterClick && elapsed >= 1200) {
+                        refreshedAfterClick = true;
+                        daTauRefreshNs();
+                        daTauOpenQuestUI();
+                    }
+                    if (elapsed >= 20000) {
+                        daTauLogDiagnostics('[Auto Dã Tẩu] Đã bấm nhận EXP nhưng chưa thấy game đổi nhiệm vụ/step:');
+                        finish(false, '[Auto Dã Tẩu] Đã gửi lệnh nhận EXP nhưng chưa xác nhận được từ game. Auto tạm dừng để tránh bấm nhận trùng.', true);
+                    }
+                }, 250);
+            };
+
+            const clickWhenReady = () => {
+                const button = daTauFindXpButton();
+                if (button) {
+                    // Chụp trạng thái sau khi task.have đã được đặt đủ, ngay trước khi gửi lệnh claim.
+                    const before = daTauGetState();
+                    baseline = { step: before.step, task: before.task, signature: daTauStateSignature(before) };
+                    try {
+                        button.click();
+                        claimed = true;
+                        clickAt = Date.now();
+                        if (buttonPoll) clearInterval(buttonPoll);
+                        if (observer) { try { observer.disconnect(); } catch (e) {} }
+                        buttonPoll = observer = null;
+                        console.info('[Auto Dã Tẩu] Đã bấm nút nhận EXP. Đang chờ game xác nhận...');
+                        waitForProgress();
+                    } catch (e) {
+                        finish(false, '[Auto Dã Tẩu] Không bấm được nút nhận EXP: ' + (e && e.message ? e.message : e), false);
+                    }
+                    return true;
+                }
+                return false;
+            };
+
+            const waitForButton = () => {
+                if (clickWhenReady()) return;
+                buttonPoll = setInterval(() => {
+                    if (clickWhenReady()) return;
+                    if (Date.now() - startedAt >= 15000) {
+                        daTauLogDiagnostics('[Auto Dã Tẩu] Không thấy nút nhận EXP sau 15 giây:');
+                        finish(false, '[Auto Dã Tẩu] Không thấy nút button[data-qcp="xp"] hoạt động sau 15 giây. Auto sẽ thử lại.', false);
+                    }
+                }, 120);
+                try {
+                    observer = new MutationObserver(() => { if (!finished) clickWhenReady(); });
+                    observer.observe(document.documentElement || document, {
+                        childList: true, subtree: true, attributes: true,
+                        attributeFilter: ['disabled', 'aria-disabled', 'class', 'style', 'data-qcp']
+                    });
+                } catch (e) {}
+            };
+
+            const startedAt = Date.now();
+            timeout = setTimeout(() => {
+                if (!finished && !claimed) {
+                    daTauLogDiagnostics('[Auto Dã Tẩu] Hết thời gian chờ nút nhận thưởng:');
+                    finish(false, '[Auto Dã Tẩu] Hết thời gian chờ nút nhận thưởng EXP. Auto sẽ thử lại.', false);
+                }
+            }, 15500);
+
+            // Bước 1: đặt tiến độ đủ; không tự ghi qc.step và không gán qc.pick.
             try {
+                const state = daTauGetState();
+                if (!state.qc || !state.task) {
+                    finish(false, '[Auto Dã Tẩu] Dữ liệu Dã Tẩu chưa sẵn sàng.', false);
+                    return;
+                }
                 state.task.have = state.task.need;
-                state.qc.pick = 'exp';
                 daTauRefreshNs();
             } catch (e) {
-                finish('[Auto Dã Tẩu] Không thể đặt tiến độ hoàn thành/chọn EXP: ' + e.message, true);
+                finish(false, '[Auto Dã Tẩu] Không thể hoàn thành tiến độ nhiệm vụ: ' + (e && e.message ? e.message : e), false);
                 return;
             }
 
-            // Theo dõi nút nhận EXP trước; nếu giao diện chưa mở thì tự mở Dã Tẩu một lần.
-            if (tryClaim()) return;
-            poll = setInterval(() => {
-                if (tryClaim()) return;
-                if (!panelTried && Date.now() - startedAt > 450) {
-                    panelTried = true;
-                    daTauOpenQuestUI(() => {
-                        daTauRefreshNs();
-                        tryClaim();
-                    });
+            // Bước 2: gọi popup gốc eb("qc"), sau đó đợi nút EXP được render.
+            daTauOpenQuestUI(() => {
+                if (finished) return;
+                const state = daTauGetState();
+                if (state.task && state.task.have !== state.task.need) {
+                    try { state.task.have = state.task.need; } catch (e) {}
+                    daTauRefreshNs();
                 }
-                if (Date.now() - startedAt > maxWait) {
-                    finish('[Auto Dã Tẩu] Không thấy nút button[data-qcp="xp"] hoạt động sau 15 giây. Giao diện nhận thưởng có thể dùng handler khác.', true);
-                    daTauLogDiagnostics('[Auto Dã Tẩu] Thông tin debug:');
-                }
-            }, 100);
+                waitForButton();
+            });
+        });
+    }
 
-            try {
-                observer = new MutationObserver(() => { tryClaim(); });
-                observer.observe(document.documentElement || document, {
-                    childList: true, subtree: true, attributes: true,
-                    attributeFilter: ['disabled', 'aria-disabled', 'class', 'style', 'data-qcp']
-                });
-            } catch (e) {}
-            timeout = setTimeout(() => {
-                if (!rewardClicked) {
-                    finish('[Auto Dã Tẩu] Hết thời gian chờ nút nhận thưởng EXP.', true);
-                    daTauLogDiagnostics('[Auto Dã Tẩu] Thông tin debug:');
-                }
-            }, maxWait + 250);
-        };
+    function daTauAutoLoop(token) {
+        if (!daTauAutoRunning || token !== daTauAutoToken) return;
+        daTauSetUiStatus('Đang xử lý nhiệm vụ Dã Tẩu thứ ' + (daTauAutoCount + 1) + '...');
+        runDaTauAutoFlow().then(result => {
+            if (!daTauAutoRunning || token !== daTauAutoToken) return;
+            if (result.ok) {
+                daTauAutoCount++;
+                daTauSetUiStatus('Đã nhận EXP ' + daTauAutoCount + ' lần. Đang chuẩn bị nhiệm vụ tiếp theo...');
+                daTauAutoTimer = setTimeout(() => daTauAutoLoop(token), 1000);
+                return;
+            }
+            if (!result.claimed) {
+                // Chưa bấm nhận: có thể an toàn thử lại sau khi giao diện/game nạp xong.
+                daTauSetUiStatus((result.message || 'Chưa sẵn sàng') + ' Thử lại sau 2 giây...');
+                daTauAutoTimer = setTimeout(() => daTauAutoLoop(token), 2000);
+                return;
+            }
+            // Đã click nhưng chưa xác nhận: dừng an toàn để tránh nhận trùng/đẩy task sai.
+            daTauAutoRunning = false;
+            daTauAutoToken++;
+            daTauSetUiStatus('Auto tạm dừng: game chưa xác nhận EXP. Xem Console để biết chi tiết.');
+        }).catch(error => {
+            if (!daTauAutoRunning || token !== daTauAutoToken) return;
+            daTauAutoRunning = false;
+            daTauAutoToken++;
+            daTauSetUiStatus('Auto gặp lỗi: ' + (error && error.message ? error.message : error));
+            console.error('[Auto Dã Tẩu] Lỗi vòng lặp:', error);
+        });
+    }
 
-        // Nếu nút nhận thưởng chưa được render, mở giao diện Dã Tẩu trước, rồi mới hoàn thành task.
-        const existingXp = daTauFindXpButton();
-        if (existingXp) {
-            beginWaitingReward();
-        } else {
-            daTauOpenQuestUI(() => beginWaitingReward());
+    function startDaTauAuto() {
+        if (daTauAutoRunning) return;
+        daTauAutoRunning = true;
+        daTauAutoCount = 0;
+        daTauAutoToken++;
+        if (daTauAutoTimer) clearTimeout(daTauAutoTimer);
+        daTauAutoTimer = null;
+        console.info('[Auto Dã Tẩu] Bắt đầu chạy liên tục. Bấm DỪNG AUTO để kết thúc.');
+        daTauSetUiStatus('Đã bật Auto Dã Tẩu. Đang bắt đầu...');
+        daTauAutoLoop(daTauAutoToken);
+    }
+
+    function stopDaTauAuto() {
+        if (!daTauAutoRunning && !daTauAutoBusy) return;
+        daTauAutoRunning = false;
+        daTauAutoToken++;
+        if (daTauAutoTimer) clearTimeout(daTauAutoTimer);
+        daTauAutoTimer = null;
+        if (daTauPendingCancel) {
+            try { daTauPendingCancel(); } catch (e) {}
         }
-        return true;
+        daTauSetUiStatus(daTauAutoBusy
+            ? 'Đã yêu cầu dừng. Bước đang xử lý sẽ kết thúc, không chạy nhiệm vụ kế tiếp.'
+            : 'Đã dừng Auto Dã Tẩu.');
+        console.info('[Auto Dã Tẩu] Đã dừng theo yêu cầu.');
     }
 
     function tabReset() {
@@ -2076,14 +2199,25 @@ T.ready=true;return 1})()`
             }
         }));
 
-        a.push(hdr('🧭 Làm Dã Tẩu nhanh'));
-        a.push(el('button', {
-            text: '⚡ HOÀN THÀNH DÃ TẨU',
-            css: BCSS + 'width:100%;padding:8px 0;font-weight:bold;margin:4px 0 8px;background:#cba6f7;color:#111;',
-            on: () => {
-                runDaTauAutoFlow();
-            }
-        }));
+        a.push(hdr('🧭 AUTO DÃ TẨU EXP'));
+        const daTauStartBtn = el('button', {
+            type: 'button', text: '▶ CHẠY AUTO DÃ TẨU',
+            css: BCSS + 'flex:1;min-width:0;padding:9px 4px;font-weight:bold;background:#28a745;color:#fff;',
+            on: () => startDaTauAuto()
+        });
+        const daTauStopBtn = el('button', {
+            type: 'button', text: '⏹ ĐÃ DỪNG', disabled: true,
+            css: BCSS + 'flex:1;min-width:0;padding:9px 4px;font-weight:bold;background:#b23b3b;color:#fff;',
+            on: () => stopDaTauAuto()
+        });
+        const daTauStatus = el('div', {
+            text: daTauAutoRunning ? ('Auto đang chạy · Đã nhận ' + daTauAutoCount + ' lần') : 'Đang dừng.',
+            css: 'width:100%;box-sizing:border-box;padding:7px 8px;margin:4px 0 8px;background:#20242c;color:#d8dee9;border:1px solid #555;border-radius:4px;font-size:11px;line-height:1.4;'
+        });
+        const daTauButtons = el('div', { css: 'display:flex;gap:6px;width:100%;margin:4px 0 0;' }, daTauStartBtn, daTauStopBtn);
+        a.push(daTauButtons, daTauStatus);
+        daTauAutoUI = { start: daTauStartBtn, stop: daTauStopBtn, status: daTauStatus };
+        daTauSetUiStatus(daTauAutoRunning ? ('Auto đang chạy · Đã nhận ' + daTauAutoCount + ' lần') : 'Đang dừng.');
 
         a.push(hdr('🏅 Tăng điểm chiến trường'));
         const meritInput = el('input', {
@@ -2477,8 +2611,8 @@ T.ready=true;return 1})()`
     }
 
     // ===== CẬP NHẬT QUA BOOTSTRAP (Stay / Tampermonkey) =====
-    // Không mở trang GitHub. Bootstrap v1.4 tải, xác minh, lưu code và tự F5.
-    const VLM_UPDATE_VERSION = '5.1';
+    // Không mở trang GitHub. Bootstrap v1.5 tải, xác minh, lưu code và tự F5.
+    const VLM_UPDATE_VERSION = '5.3';
     let vlmUpdateBusy = false;
 
     function vlmGetUpdaterBridge() {
@@ -2500,7 +2634,7 @@ T.ready=true;return 1})()`
         try {
             const bridge = vlmGetUpdaterBridge();
             if (!bridge) {
-                throw new Error('Chưa có Updater Bootstrap v1.4. Hãy cài Updater v1.4 và chỉ bật Updater; tắt script Auto đầy đủ cài riêng.');
+                throw new Error('Chưa kết nối Bootstrap Updater. Hãy cài và bật Auto_Updater_Bootstrap_Tampermonkey_Stay_v1.5.js; script.user.js chỉ là mã tải từ GitHub, không cài trực tiếp.');
             }
             const result = await bridge.update(VLM_UPDATE_VERSION);
             if (result && result.updated) {
