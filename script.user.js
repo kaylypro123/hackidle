@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Auto Hoài Niệm + Ns Mod (All-in-One)
 // @namespace    vlmod
-// @version      5.9
+// @version      6.0
 // @description  Auto Hoài Niệm + Ns Mod + Auto Dã Tẩu ẩn popup, giữ tương tác Rương/Nhân vật/Kỹ năng + cập nhật GitHub All-in-One
 // @match        *://hoainiem2003.net/*
 // @match        *://*/*vltk*
