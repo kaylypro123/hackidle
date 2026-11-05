@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name         Auto Hoài Niệm + Ns Mod (All-in-One)
+// @name         Auto Complete
 // @namespace    vlmod
 // @version      6.0
 // @description  Auto Hoài Niệm + Ns Mod + Auto Dã Tẩu ẩn popup, giữ tương tác Rương/Nhân vật/Kỹ năng + cập nhật GitHub All-in-One
@@ -32,7 +32,7 @@
 (function () {
     'use strict';
 
-    const INSTALLED_VERSION = '5.9';
+    const INSTALLED_VERSION = '6.0';
     const RAW_URL = 'https://raw.githubusercontent.com/kaylypro123/hackidle/refs/heads/main/script.user.js';
     const JSDELIVR_URL = 'https://cdn.jsdelivr.net/gh/kaylypro123/hackidle@main/script.user.js';
     const API_URL = 'https://api.github.com/repos/kaylypro123/hackidle/contents/script.user.js?ref=main';
